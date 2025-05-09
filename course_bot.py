@@ -8,7 +8,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from apscheduler.schedulers.background import BackgroundScheduler
 
-import os
 
 # Try to import dotenv, but continue if not available
 try:
@@ -18,7 +17,7 @@ except ImportError:
     # If dotenv is not installed, just continue
     pass
 
-TOKEN = os.getenv('7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU')
+TOKEN = '7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU'
 
 # Enable logging
 logging.basicConfig(
@@ -404,44 +403,23 @@ async def test_mode_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main() -> None:
     """Start the bot"""
-    # Create the Application and pass it your bot's token
     application = Application.builder().token(TOKEN).build()
 
-    # Register command handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(CommandHandler("bonus", bonus_command))
-    
-    # Test commands
-    application.add_handler(CommandHandler("test_all", test_all_lessons))
-    application.add_handler(CommandHandler("test_on", test_mode_on))
-    application.add_handler(CommandHandler("test_off", test_mode_off))
+    # Реєстрація обробників команд (залишаємо як є)
+    # ...
 
-    # Set up scheduler for daily lessons
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(check_and_send_daily_lessons, 'interval', hours=1)  # Check every hour
-    scheduler.start()
+    # Налаштування для Render
+    PORT = int(os.environ.get('PORT', 10000))  # Render використовує порт 10000
     
-    # Налаштування порту та вебхука для Render
-    PORT = int(os.environ.get('PORT', 8443))
-    
-    # Перевіряємо, чи запущено на Render
     if 'RENDER' in os.environ:
-        # Отримуємо URL сервісу з змінної середовища
-        WEBHOOK_URL = os.environ.get('https://telegramcoursebot-18ir.onrender.com')
-        
-        # Запускаємо webhook
+        # Конфігурація вебхука
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+            webhook_url="https://telegramcoursebot-18ir.onrender.com/webhook",
+            allowed_updates=["message"]
         )
     else:
-        # Локальний режим або інший хостинг
+        # Локальний режим
         keep_alive()
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == '__main__':
-    main()
+        application.run_polling()
