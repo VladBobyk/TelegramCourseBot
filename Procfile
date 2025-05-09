@@ -1,0 +1,1 @@
+web: python course_bot.py
