@@ -429,7 +429,7 @@ def main() -> None:
     # Перевіряємо, чи запущено на Render
     if 'RENDER' in os.environ:
         # Отримуємо URL сервісу з змінної середовища
-        WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
+        WEBHOOK_URL = os.environ.get('https://render.com/docs/troubleshooting-deploys')
         
         # Запускаємо webhook
         application.run_webhook(
