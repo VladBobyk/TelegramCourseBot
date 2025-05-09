@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: telegramcoursebot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python course_bot.py
+    env: python
+    port: 10000

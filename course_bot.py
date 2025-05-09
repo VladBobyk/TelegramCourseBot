@@ -412,13 +412,12 @@ def main() -> None:
     PORT = int(os.environ.get('PORT', 10000))  # Render використовує порт 10000
     
     if 'RENDER' in os.environ:
-        # Конфігурація вебхука
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            webhook_url="https://telegramcoursebot-18ir.onrender.com/webhook",
-            allowed_updates=["message"]
-        )
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,  # Тепер це 10000
+        webhook_url="https://telegramcoursebot-18ir.onrender.com/webhook",
+        allowed_updates=["message"]
+    )
     else:
         # Локальний режим
         keep_alive()
