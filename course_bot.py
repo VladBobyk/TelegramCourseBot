@@ -16,7 +16,7 @@ except ImportError:
     # If dotenv is not installed, just continue
     pass
 
-TOKEN = os.getenv('7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU')
+TOKEN = os.getenv('TOKEN', '7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU')
 
 # Enable logging
 logging.basicConfig(
@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-TOKEN = '7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU'  # Replace with your actual token from BotFather
+TOKEN = os.getenv('TOKEN', '7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU')  # Replace with your actual token from BotFather
 
 # Database simulation - in production, use a real database
 USER_DATA_FILE = 'user_data.json'
@@ -422,24 +422,20 @@ def main() -> None:
     scheduler.start()
     
     # Налаштування порту та вебхука для Render
-    PORT = int(os.environ.get('PORT', 10000))
-    
-    # Перевіряємо, чи запущено на Render
-    if 'RENDER' in os.environ:
-        # Отримуємо URL сервісу з змінної середовища
-        WEBHOOK_URL = os.environ.get('https://telegramcoursebot-18ir.onrender.com/webhook')
-        
-        # Запускаємо webhook
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
-        )
-    else:
-        # Локальний режим або інший хостинг
-        keep_alive()
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+   WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
+
+if WEBHOOK_URL:
+    print(f"Starting webhook on port {PORT} with URL {WEBHOOK_URL}")
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,
+        webhook_url=f"https://telegramcoursebot-18ir.onrender.com/7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU"
+    )
+else:
+    print("No webhook URL found, starting polling mode")
+    keep_alive()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
