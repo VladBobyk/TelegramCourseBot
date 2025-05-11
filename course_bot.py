@@ -421,21 +421,22 @@ def main() -> None:
     scheduler.add_job(check_and_send_daily_lessons, 'interval', hours=1)  # Check every hour
     scheduler.start()
     
-    # Налаштування порту та вебхука для Render
-   WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
+    # Handling webhook and polling settings for Render deployment
+    PORT = int(os.environ.get('PORT', 10000))
+    WEBHOOK_URL = os.environ.get('https://telegramcoursebot-18ir.onrender.com')
 
-if WEBHOOK_URL:
-    print(f"Starting webhook on port {PORT} with URL {WEBHOOK_URL}")
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"https://telegramcoursebot-18ir.onrender.com/7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU"
-    )
-else:
-    print("No webhook URL found, starting polling mode")
-    keep_alive()
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    if WEBHOOK_URL:
+        print(f"Starting webhook on port {PORT} with URL {WEBHOOK_URL}")
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+        )
+    else:
+        print("No webhook URL found, starting polling mode")
+        keep_alive()
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
