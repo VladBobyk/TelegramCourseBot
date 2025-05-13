@@ -1,5 +1,4 @@
-﻿
-import logging
+﻿import logging
 import os
 import json
 from server import keep_alive
@@ -8,32 +7,38 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# Try to import dotenv, but continue if not available
+# Спроба імпортувати dotenv, продовжуємо, якщо не вдалося
 try:
     from dotenv import load_dotenv
-    load_dotenv()  # Move this line INSIDE the try block
+    load_dotenv()
 except ImportError:
-    # If dotenv is not installed, just continue
+    # Якщо dotenv не встановлено, просто продовжуємо
     pass
 
-TOKEN = os.getenv('TOKEN', 'TELEGRAM_BOT_TOKEN')
+# Отримання токену - використовуємо TELEGRAM_BOT_TOKEN як назву змінної
+# для відповідності з іншими файлами проекту
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
-# Enable logging
+# Перевірка наявності токену
+if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == 'TELEGRAM_BOT_TOKEN':
+    # Спробуємо отримати токен з TOKEN (альтернативна назва змінної)
+    TELEGRAM_BOT_TOKEN = os.getenv('TOKEN')
+    if not TELEGRAM_BOT_TOKEN:
+        raise ValueError("Не вдалося знайти токен бота. Перевірте змінні середовища.")
+
+# Увімкнення логування
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
-TOKEN = os.getenv('TOKEN', 'TELEGRAM_BOT_TOKEN')  # Replace with your actual token from BotFather
-
-# Database simulation - in production, use a real database
+# Конфігурація
 USER_DATA_FILE = 'user_data.json'
 
-# Flag to control testing mode - set to False for normal operation
+# Прапорець для контролю тестового режиму - встановіть False для нормальної роботи
 TEST_MODE = False
 
-# Video lessons - properly encoding Cyrillic strings with proper formatting
+# Відеоуроки з правильним кодуванням кирилиці та форматуванням
 LESSONS = {
     1: {
         'intro_message': "Вітаю вас на першому дні інтенсиву! 🎊,\n\n"
@@ -94,40 +99,40 @@ LESSONS = {
 }
 
 def load_user_data():
-    """Load user data from file or environment"""
-    if 'USER_DATA' in os.environ:
-        return json.loads(os.environ.get('USER_DATA', '{}'))
-    elif os.path.exists(USER_DATA_FILE):
-        with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+    """Завантаження даних користувачів з файлу"""
+    try:
+        if os.path.exists(USER_DATA_FILE):
+            with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Помилка при завантаженні даних користувачів: {e}")
     return {}
 
 def save_user_data(data):
-    """Save user data to file and environment if possible"""
-    # Always save to file for local development
-    with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False)
-    
-    # If running on Render, also update environment variable
-    if 'RENDER' in os.environ:
-        # Note: This is a workaround and has limitations
-        # For production, use a proper database
-        os.environ['USER_DATA'] = json.dumps(data)
+    """Збереження даних користувачів у файл"""
+    try:
+        # Створюємо директорію, якщо вона не існує
+        os.makedirs(os.path.dirname(USER_DATA_FILE) or '.', exist_ok=True)
+        
+        with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Помилка при збереженні даних користувачів: {e}")
 
-# Initialize user data storage
+# Ініціалізація зберігання даних користувачів
 user_data = load_user_data()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send welcome message and first lesson when the command /start is issued"""
+    """Відправити привітальне повідомлення та перший урок, коли видано команду /start"""
     user_id = str(update.effective_user.id)
     user_name = update.effective_user.first_name
     
-    # Check if user already started the course
+    # Перевірка, чи користувач вже розпочав курс
     if user_id in user_data:
         await update.message.reply_text(f"З поверненням, {user_name}! Ваш курс вже розпочато.")
         return
     
-    # Register new user
+    # Реєстрація нового користувача
     current_date = datetime.now().strftime('%Y-%m-%d')
     user_data[user_id] = {
         'name': user_name,
@@ -137,25 +142,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     }
     save_user_data(user_data)
     
-    # Send welcome message from lesson 1
+    # Відправити привітальне повідомлення з уроку 1
     await update.message.reply_text(
         LESSONS[1]['intro_message'],
         parse_mode='Markdown'
     )
     
-    # Send first lesson
+    # Відправити перший урок
     await send_lesson(context.bot, user_id, 1)
 
 async def send_lesson(bot, user_id: str, day: int) -> None:
-    """Send a specific lesson to a user"""
+    """Відправити конкретний урок користувачеві"""
     if day > 3:
-        # Send bonus content
+        # Відправити бонусний контент
         await send_bonus(bot, user_id)
         return
     
     lesson = LESSONS[day]
     
-    # Send intro message if it's not the first day (first day intro is sent in start command)
+    # Відправити вступне повідомлення, якщо це не перший день (вступ для першого дня відправляється в команді start)
     if day > 1 and 'intro_message' in lesson:
         await bot.send_message(
             chat_id=user_id,
@@ -163,15 +168,26 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
             parse_mode='Markdown'
         )
     
-    # Send each video in the lesson
+    # Відправити кожне відео в уроці
     for video in lesson['videos']:
-        await bot.send_video(
-            chat_id=user_id,
-            video=video['file_id'],
-            caption=video['caption']
-        )
+        try:
+            await bot.send_video(
+                chat_id=user_id,
+                video=video['file_id'],
+                caption=video['caption']
+            )
+        except Exception as e:
+            logger.error(f"Помилка при відправці відео: {e}")
+            # Спробувати відправити повідомлення про помилку
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=f"Не вдалося відправити відео. Спробуйте пізніше або зверніться до підтримки."
+                )
+            except:
+                pass
     
-    # For day 2, send the special documents message and documents
+    # Для дня 2 відправити спеціальні документи та повідомлення
     if day == 2 and 'post_videos_message' in lesson:
         await bot.send_message(
             chat_id=user_id,
@@ -179,16 +195,19 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
             parse_mode='Markdown'
         )
         
-        # Send documents
+        # Відправити документи
         if 'documents' in lesson:
             for doc in lesson['documents']:
-                await bot.send_document(
-                    chat_id=user_id,
-                    document=doc['file_id'],
-                    caption=doc['caption']
-                )
+                try:
+                    await bot.send_document(
+                        chat_id=user_id,
+                        document=doc['file_id'],
+                        caption=doc['caption']
+                    )
+                except Exception as e:
+                    logger.error(f"Помилка при відправці документа: {e}")
     
-    # Update user data
+    # Оновити дані користувача
     user_data[user_id]['current_day'] = day
     user_data[user_id]['last_lesson_date'] = datetime.now().strftime('%Y-%m-%d')
     save_user_data(user_data)
@@ -200,37 +219,40 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
             parse_mode='Markdown'
         )
     else:
-        # After day 3, send notification about bonus
+        # Після дня 3 відправити повідомлення про бонус
         await bot.send_message(
             chat_id=user_id,
             text="Вітаємо! Ви завершили міні-курс! Завтра ви отримаєте спеціальний бонус.",
             parse_mode='Markdown'
         )
         
-        # If in test mode, immediately send the bonus content
+        # Якщо в тестовому режимі, відразу відправити бонусний контент
         if TEST_MODE:
             await send_bonus(bot, user_id)
 
 async def send_bonus(bot, user_id: str) -> None:
-    """Send bonus content to user"""
+    """Відправити бонусний контент користувачеві"""
     bonus = LESSONS[4]
     
-    # Send bonus text message first
+    # Спочатку відправити бонусне текстове повідомлення
     await bot.send_message(
         chat_id=user_id,
         text=bonus['bonus_text'],
         parse_mode='Markdown'
     )
     
-    # Then send bonus video(s)
+    # Потім відправити бонусне відео(а)
     for video in bonus['videos']:
-        await bot.send_video(
-            chat_id=user_id,
-            video=video['file_id'],
-            caption=video['caption']
-        )
+        try:
+            await bot.send_video(
+                chat_id=user_id,
+                video=video['file_id'],
+                caption=video['caption']
+            )
+        except Exception as e:
+            logger.error(f"Помилка при відправці бонусного відео: {e}")
     
-    # Send discount information
+    # Відправити інформацію про знижку
     if 'post_bonus_text' in bonus:
         await bot.send_message(
             chat_id=user_id,
@@ -238,38 +260,46 @@ async def send_bonus(bot, user_id: str) -> None:
             parse_mode='Markdown'
         )
     
-    # Update user status
+    # Оновити статус користувача
     user_data[user_id]['current_day'] = 4
     user_data[user_id]['completed'] = True
     save_user_data(user_data)
 
 async def check_and_send_daily_lessons():
-    """Check if users should receive their next lesson"""
-    # Skip if in test mode
+    """Перевірити, чи користувачі повинні отримати свій наступний урок"""
+    # Пропустити, якщо в тестовому режимі
     if TEST_MODE:
         return
         
-    today = datetime.now().strftime('%Y-%m-%d')
-    application = Application.builder().token(TOKEN).build()
-    
-    for user_id, data in user_data.items():
-        # Skip users who have completed the full course (including bonus)
-        if data.get('completed', False):
-            continue
-            
-        last_lesson_date = datetime.strptime(data['last_lesson_date'], '%Y-%m-%d')
-        next_lesson_date = last_lesson_date + timedelta(days=1)
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
         
-        # If it's time for the next lesson
-        if next_lesson_date.strftime('%Y-%m-%d') <= today and data['current_day'] <= 3:
-            next_day = data['current_day'] + 1
-            # Don't need a separate message here as the intro message is now part of send_lesson
-            await send_lesson(application.bot, user_id, next_day)
-    
-    await application.shutdown()
+        # Створюємо новий екземпляр застосунку 
+        app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+        
+        for user_id, data in user_data.items():
+            # Пропустити користувачів, які завершили повний курс (включаючи бонус)
+            if data.get('completed', False):
+                continue
+                
+            last_lesson_date = datetime.strptime(data['last_lesson_date'], '%Y-%m-%d')
+            next_lesson_date = last_lesson_date + timedelta(days=1)
+            
+            # Якщо час для наступного уроку
+            if next_lesson_date.strftime('%Y-%m-%d') <= today and data['current_day'] <= 3:
+                next_day = data['current_day'] + 1
+                try:
+                    await send_lesson(app.bot, user_id, next_day)
+                    logger.info(f"Відправлено урок {next_day} користувачу {user_id}")
+                except Exception as e:
+                    logger.error(f"Помилка при відправці уроку {next_day} користувачу {user_id}: {e}")
+        
+        await app.shutdown()
+    except Exception as e:
+        logger.error(f"Помилка при перевірці та відправці щоденних уроків: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /help is issued"""
+    """Відправити повідомлення, коли видано команду /help"""
     await update.message.reply_text(
         "Цей бот відправить вам 3-денний міні-курс.\n\n"
         "Команди:\n"
@@ -282,7 +312,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Check status of the course for this user"""
+    """Перевірити статус курсу для цього користувача"""
     user_id = str(update.effective_user.id)
     
     if user_id not in user_data:
@@ -315,7 +345,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 async def bonus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send bonus content immediately if user has completed main course"""
+    """Відправити бонусний контент негайно, якщо користувач завершив основний курс"""
     user_id = str(update.effective_user.id)
     
     if user_id not in user_data:
@@ -336,10 +366,10 @@ async def bonus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
 async def test_all_lessons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Test command to send all lessons at once"""
+    """Тестова команда для відправки всіх уроків одразу"""
     user_id = str(update.effective_user.id)
     
-    # Register user if not exists
+    # Зареєструвати користувача, якщо не існує
     if user_id not in user_data:
         current_date = datetime.now().strftime('%Y-%m-%d')
         user_data[user_id] = {
@@ -352,9 +382,9 @@ async def test_all_lessons(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     await update.message.reply_text("🧪 Тестовий режим: відправляємо всі уроки та бонуси...")
     
-    # Send all lessons with short delays
+    # Відправити всі уроки з короткими затримками
     await update.message.reply_text("📚 Урок 1:")
-    # Send intro for lesson 1
+    # Відправити вступ для уроку 1
     await update.message.reply_text(
         LESSONS[1]['intro_message'],
         parse_mode='Markdown'
@@ -362,7 +392,7 @@ async def test_all_lessons(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await send_lesson(context.bot, user_id, 1)
     
     await update.message.reply_text("📚 Урок 2:")
-    # Send intro for lesson 2
+    # Відправити вступ для уроку 2
     await update.message.reply_text(
         LESSONS[2]['intro_message'],
         parse_mode='Markdown'
@@ -370,19 +400,19 @@ async def test_all_lessons(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await send_lesson(context.bot, user_id, 2)
     
     await update.message.reply_text("📚 Урок 3:")
-    # Send intro for lesson 3
+    # Відправити вступ для уроку 3
     await update.message.reply_text(
         LESSONS[3]['intro_message'],
         parse_mode='Markdown'
     )
     await send_lesson(context.bot, user_id, 3)
     
-    # Bonus is sent automatically after lesson 3 in test mode
+    # Бонус відправляється автоматично після уроку 3 в тестовому режимі
     
     await update.message.reply_text("✅ Тестування завершено! Всі повідомлення відправлено.")
 
 async def test_mode_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Enable test mode"""
+    """Увімкнути тестовий режим"""
     global TEST_MODE
     TEST_MODE = True
     await update.message.reply_text(
@@ -392,7 +422,7 @@ async def test_mode_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 async def test_mode_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Disable test mode"""
+    """Вимкнути тестовий режим"""
     global TEST_MODE
     TEST_MODE = False
     await update.message.reply_text(
@@ -401,42 +431,53 @@ async def test_mode_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 def main() -> None:
-    """Start the bot"""
-    # Create the Application and pass it your bot's token
-    application = Application.builder().token(TOKEN).build()
+    """Запустити бота"""
+    try:
+        # Перевірка токену ще раз для впевненості
+        if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == 'TELEGRAM_BOT_TOKEN':
+            logger.error("Токен бота не знайдено або він неправильний. Перевірте змінні середовища.")
+            raise ValueError("Неправильний токен бота")
+            
+        # Створити Application та передати токен бота
+        application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Register command handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(CommandHandler("bonus", bonus_command))
-    
-    # Test commands
-    application.add_handler(CommandHandler("test_all", test_all_lessons))
-    application.add_handler(CommandHandler("test_on", test_mode_on))
-    application.add_handler(CommandHandler("test_off", test_mode_off))
+        # Зареєструвати обробники команд
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("status", status_command))
+        application.add_handler(CommandHandler("bonus", bonus_command))
+        
+        # Тестові команди
+        application.add_handler(CommandHandler("test_all", test_all_lessons))
+        application.add_handler(CommandHandler("test_on", test_mode_on))
+        application.add_handler(CommandHandler("test_off", test_mode_off))
 
-    # Set up scheduler for daily lessons
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(check_and_send_daily_lessons, 'interval', hours=1)  # Check every hour
-    scheduler.start()
-    
-    # Handling webhook and polling settings for Render deployment
-    PORT = int(os.environ.get('PORT', 10000))
-    WEBHOOK_URL = os.environ.get('https://telegramcoursebot-18ir.onrender.com')
+        # Налаштувати планувальник для щоденних уроків
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(check_and_send_daily_lessons, 'interval', hours=1)  # Перевіряти кожну годину
+        scheduler.start()
+        
+        # Обробка налаштувань webhook та polling для розгортання Render
+        PORT = int(os.environ.get('PORT', 10000))
+        
+        # Правильне отримання URL для вебхука з середовища
+        WEBHOOK_URL = os.environ.get('https://telegramcoursebot-18ir.onrender.com')
 
-    if WEBHOOK_URL:
-        print(f"Starting webhook on port {PORT} with URL {WEBHOOK_URL}")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
-        )
-    else:
-        print("No webhook URL found, starting polling mode")
-        keep_alive()
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        if WEBHOOK_URL:
+            logger.info(f"Запуск webhook на порту {PORT} з URL {WEBHOOK_URL}")
+            application.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                url_path=TELEGRAM_BOT_TOKEN,
+                webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_BOT_TOKEN}"
+            )
+        else:
+            logger.info("URL вебхука не знайдено, запуск в режимі polling")
+            keep_alive()
+            application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except Exception as e:
+        logger.error(f"Помилка при запуску бота: {e}")
+        raise
 
 if __name__ == '__main__':
     main()
