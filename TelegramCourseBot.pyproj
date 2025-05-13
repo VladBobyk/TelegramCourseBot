@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -14,7 +15,8 @@
     <InterpreterId>MSBuild|env|$(MSBuildProjectFullPath)</InterpreterId>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
-    <Environment>TELEGRAM_BOT_TOKEN=7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU</Environment>
+    <!-- Використовуємо значення з .env файлу замість явного запису токена тут -->
+    <Environment></Environment>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -48,12 +50,4 @@
     <Content Include="requirements.txt" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
-  <!-- Uncomment the CoreCompile target to enable the Build command in
-       Visual Studio and specify your pre- and post-build commands in
-       the BeforeBuild and AfterBuild targets below. -->
-  <!--<Target Name="CoreCompile" />-->
-  <Target Name="BeforeBuild">
-  </Target>
-  <Target Name="AfterBuild">
-  </Target>
 </Project>
