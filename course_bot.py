@@ -49,7 +49,7 @@ LESSONS = {
         "– Як їх розпізнати в роботі з керівництвом, колегами та клієнтами\n"
         "– Та найголовніше — як навчитись себе захищати\n",
         'videos': [
-            {'file_id': 'BAACAgIAAyEFAASaGaDWAAMWaB4BuTq41XAp90PnvmCB4hMTGL4AAhZsAAJ_NfBI39cIf7_aME02BA', 
+            {'file_id': 'BAACAgIAAyEFAASaGaDWAAMeaCNM2Q1tPOzDskUXmsxCs9PhHjgAAnd1AAK5ARhJo4zf7IIDr282BA', 
              'caption': ''}
         ],
         'completion_message': 'Завтра на вас чекатиме другий урок — подкаст з адвокаткою про ФОПи, права майстра та орендні договори.✔️'
