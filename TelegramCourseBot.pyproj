@@ -44,6 +44,7 @@
     <Content Include=".env" />
     <Content Include=".gitignore" />
     <Content Include="Procfile" />
+    <Content Include="render.yaml" />
     <Content Include="requirements.txt" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />

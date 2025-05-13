@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+﻿﻿# -*- coding: utf-8 -*-
 import logging
 import os
 import json
@@ -16,7 +16,7 @@ except ImportError:
     # If dotenv is not installed, just continue
     pass
 
-TOKEN = os.getenv('TOKEN', '7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU')
+TOKEN = os.getenv('TOKEN', 'TELEGRAM_BOT_TOKEN')
 
 # Enable logging
 logging.basicConfig(
@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-TOKEN = os.getenv('TOKEN', '7951312973:AAG-y-gAzZ4DteNhTeZxKIukvcpIx5xOKrU')  # Replace with your actual token from BotFather
+TOKEN = os.getenv('TOKEN', 'TELEGRAM_BOT_TOKEN')  # Replace with your actual token from BotFather
 
 # Database simulation - in production, use a real database
 USER_DATA_FILE = 'user_data.json'
