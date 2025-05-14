@@ -25,7 +25,7 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('TOKEN')
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("Не вдалося знайти токен бота. Перевірте змінні середовища.")
 
-RENDER_APP_URL = os.getenv('RENDER_APP_URL', 'https://your-app-url.onrender.com')
+RENDER_APP_URL = os.getenv('RENDER_APP_URL', 'https://telegramcoursebot-18ir.onrender.com')
 USER_DATA_FILE = 'user_data.json'
 TEST_MODE = False
 
@@ -162,16 +162,22 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
         save_user_data(user_data)
         
         if day == 3:
+            # Після 3-го уроку пропонуємо вибір часу для бонусу
+            keyboard = [
+                [InlineKeyboardButton("Отримати бонус зараз", callback_data="bonus_now")],
+                [InlineKeyboardButton("Завтра", callback_data="bonus_tomorrow")],
+                [InlineKeyboardButton("Через 2 дні", callback_data="bonus_2days")]
+            ]
             await bot.send_message(
                 chat_id=user_id,
-                text=LESSONS[3]['completion_message'],
-                parse_mode='Markdown'
+                text="Вітаємо! Ви завершили основний курс! Коли ви хочете отримати бонусний матеріал?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
-            await send_bonus(bot, user_id)
         elif day < 3:
+            # Для уроків 1-2 пропонуємо вибір часу для наступного уроку
             keyboard = [
                 [InlineKeyboardButton("Отримати наступний урок зараз", callback_data=f"next_now_{day+1}")],
-                [InlineKeyboardButton("Завтра", callback_data=f"next_day_{day+1}")],
+                [InlineKeyboardButton("Завтра", callback_data=f"next_tomorrow_{day+1}")],
                 [InlineKeyboardButton("Через 2 дні", callback_data=f"next_2days_{day+1}")]
             ]
             await bot.send_message(
@@ -186,6 +192,31 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
             chat_id=user_id,
             text="Сталася помилка. Спробуйте пізніше."
         )
+
+async def ask_time_selection(bot, user_id: str, lesson_type: str, lesson_day: int = None):
+    """Запит вибору часу для уроку/бонусу"""
+    keyboard = [
+        [
+            InlineKeyboardButton("Ранок (08:00)", callback_data=f"time_08_{lesson_type}_{lesson_day}"),
+            InlineKeyboardButton("День (12:00)", callback_data=f"time_12_{lesson_type}_{lesson_day}"),
+        ],
+        [
+            InlineKeyboardButton("Вечір (18:00)", callback_data=f"time_18_{lesson_type}_{lesson_day}"),
+            InlineKeyboardButton("Ніч (22:00)", callback_data=f"time_22_{lesson_type}_{lesson_day}"),
+        ]
+    ]
+    
+    text = "Оберіть бажаний час отримання "
+    if lesson_type == "bonus":
+        text += "бонусного матеріалу:"
+    else:
+        text += f"уроку {lesson_day}:"
+    
+    await bot.send_message(
+        chat_id=user_id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def send_bonus(bot, user_id: str) -> None:
     """Відправка бонусного матеріалу"""
@@ -260,22 +291,52 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(text=f"Відправляємо урок {lesson_day}...")
         await send_lesson(context.bot, user_id, lesson_day)
     
-    elif callback_data.startswith("next_day_"):
+    elif callback_data.startswith("next_tomorrow_"):
         lesson_day = int(callback_data.split("_")[2])
-        selected_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-        await query.edit_message_text(text=f"Ви отримаєте урок {lesson_day} завтра о 10:00.")
-        user_data[user_id]["next_lesson_day"] = lesson_day
-        user_data[user_id]["next_lesson_date"] = selected_date
-        user_data[user_id]["next_lesson_time"] = "10:00"
-        save_user_data(user_data)
+        await query.edit_message_text(text="Оберіть час отримання уроку:")
+        await ask_time_selection(context.bot, user_id, "lesson", lesson_day)
     
     elif callback_data.startswith("next_2days_"):
         lesson_day = int(callback_data.split("_")[2])
-        selected_date = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
-        await query.edit_message_text(text=f"Ви отримаєте урок {lesson_day} через 2 дні о 10:00.")
-        user_data[user_id]["next_lesson_day"] = lesson_day
-        user_data[user_id]["next_lesson_date"] = selected_date
-        user_data[user_id]["next_lesson_time"] = "10:00"
+        await query.edit_message_text(text="Оберіть час отримання уроку:")
+        await ask_time_selection(context.bot, user_id, "lesson", lesson_day)
+    
+    elif callback_data == "bonus_now":
+        await query.edit_message_text(text="Відправляємо бонусний матеріал...")
+        await send_bonus(context.bot, user_id)
+    
+    elif callback_data == "bonus_tomorrow":
+        await query.edit_message_text(text="Оберіть час отримання бонусу:")
+        await ask_time_selection(context.bot, user_id, "bonus")
+    
+    elif callback_data == "bonus_2days":
+        await query.edit_message_text(text="Оберіть час отримання бонусу:")
+        await ask_time_selection(context.bot, user_id, "bonus")
+    
+    elif callback_data.startswith("time_"):
+        parts = callback_data.split("_")
+        hour = parts[1]
+        lesson_type = parts[2]
+        lesson_day = parts[3] if len(parts) > 3 else None
+        
+        selected_time = f"{hour}:00"
+        
+        if lesson_type == "bonus":
+            selected_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') if "tomorrow" in callback_data else (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+            user_data[user_id]["next_bonus_date"] = selected_date
+            user_data[user_id]["next_bonus_time"] = selected_time
+            await query.edit_message_text(
+                text=f"Ви отримаєте бонусний матеріал {selected_date} о {selected_time}."
+            )
+        else:
+            selected_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') if "tomorrow" in callback_data else (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+            user_data[user_id]["next_lesson_day"] = int(lesson_day)
+            user_data[user_id]["next_lesson_date"] = selected_date
+            user_data[user_id]["next_lesson_time"] = selected_time
+            await query.edit_message_text(
+                text=f"Ви отримаєте урок {lesson_day} {selected_date} о {selected_time}."
+            )
+        
         save_user_data(user_data)
 
 async def check_and_send_scheduled_lessons():
@@ -291,6 +352,7 @@ async def check_and_send_scheduled_lessons():
             if data.get('completed', False):
                 continue
                 
+            # Перевірка запланованих уроків
             if ("next_lesson_date" in data and 
                 "next_lesson_time" in data and
                 data["next_lesson_date"] <= current_date and
@@ -304,6 +366,20 @@ async def check_and_send_scheduled_lessons():
                     save_user_data(user_data)
                 except Exception as e:
                     logger.error(f"Помилка відправки уроку {next_day}: {e}")
+            
+            # Перевірка запланованих бонусів
+            if ("next_bonus_date" in data and 
+                "next_bonus_time" in data and
+                data["next_bonus_date"] <= current_date and
+                data["next_bonus_time"] <= current_time):
+                
+                try:
+                    await send_bonus(app.bot, user_id)
+                    for key in ["next_bonus_date", "next_bonus_time"]:
+                        data.pop(key, None)
+                    save_user_data(user_data)
+                except Exception as e:
+                    logger.error(f"Помилка відправки бонусу: {e}")
         
         await app.shutdown()
     except Exception as e:
@@ -335,13 +411,26 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if data.get('completed', False):
         await update.message.reply_text("Ви завершили курс! Вітаємо!")
     elif current_day >= 3:
-        await update.message.reply_text("Ви завершили основний курс! Бонус вже відправлено.")
+        if "next_bonus_date" in data:
+            await update.message.reply_text(
+                f"Ви завершили основний курс! Бонус буде надіслано {data['next_bonus_date']} о {data['next_bonus_time']}.\n"
+                "Ви можете отримати його зараз командою /bonus."
+            )
+        else:
+            await update.message.reply_text(
+                "Ви завершили основний курс! Бонусний матеріал готовий для вас.\n"
+                "Використайте /bonus щоб отримати його зараз."
+            )
     else:
         if "next_lesson_date" in data:
-            next_date = data["next_lesson_date"]
-            await update.message.reply_text(f"Ви на дні {current_day}. Наступний урок буде {next_date} о 10:00.")
+            await update.message.reply_text(
+                f"Ви на дні {current_day}. Наступний урок буде {data['next_lesson_date']} о {data['next_lesson_time']}.\n"
+                "Ви можете отримати його зараз командою /next."
+            )
         else:
-            await update.message.reply_text(f"Ви на дні {current_day}. Використайте /next для наступного уроку.")
+            await update.message.reply_text(
+                f"Ви на дні {current_day}. Використайте /next для наступного уроку."
+            )
 
 async def next_lesson_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /next"""
@@ -357,7 +446,9 @@ async def next_lesson_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data.get('completed', False):
         await update.message.reply_text("Ви вже завершили весь курс!")
     elif current_day >= 3:
-        await update.message.reply_text("Ви завершили основний курс! Бонус вже відправлено.")
+        await update.message.reply_text(
+            "Ви завершили основний курс! Для отримання бонусного матеріалу використайте команду /bonus."
+        )
     else:
         next_day = current_day + 1
         await update.message.reply_text(f"Відправляємо урок {next_day}...")
@@ -374,12 +465,14 @@ async def bonus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     data = user_data[user_id]
     
     if data.get('completed', False):
-        await update.message.reply_text("Ви вже отримали бонус.")
+        await update.message.reply_text("Ви вже отримали бонусний матеріал.")
     elif data['current_day'] >= 3 or TEST_MODE:
-        await update.message.reply_text("Відправляємо бонус...")
+        await update.message.reply_text("Відправляємо бонусний матеріал...")
         await send_bonus(context.bot, user_id)
     else:
-        await update.message.reply_text(f"Ви ще не завершили курс (наразі день {data['current_day']}/3).")
+        await update.message.reply_text(
+            f"Ви ще не завершили основний курс (наразі день {data['current_day']}/3)."
+        )
 
 def ping_server():
     """Пінгування сервера"""
