@@ -193,30 +193,34 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
             text="Сталася помилка. Спробуйте пізніше."
         )
 
-async def ask_time_selection(bot, user_id: str, lesson_type: str, lesson_day: int = None):
+async def ask_time_selection(bot, user_id: str, days_to_add: int, lesson_day: int = None):
     """Запит вибору часу для уроку/бонусу"""
+    selected_date = (datetime.now() + timedelta(days=days_to_add)).strftime('%Y-%m-%d')
+    
     keyboard = [
         [
-            InlineKeyboardButton("Ранок (08:00)", callback_data=f"time_08_{lesson_type}_{lesson_day}"),
-            InlineKeyboardButton("День (12:00)", callback_data=f"time_12_{lesson_type}_{lesson_day}"),
+            InlineKeyboardButton("Ранок (08:00)", callback_data=f"time_08_{days_to_add}_{lesson_day}"),
+            InlineKeyboardButton("День (12:00)", callback_data=f"time_12_{days_to_add}_{lesson_day}"),
         ],
         [
-            InlineKeyboardButton("Вечір (18:00)", callback_data=f"time_18_{lesson_type}_{lesson_day}"),
-            InlineKeyboardButton("Ніч (22:00)", callback_data=f"time_22_{lesson_type}_{lesson_day}"),
+            InlineKeyboardButton("Вечір (18:00)", callback_data=f"time_18_{days_to_add}_{lesson_day}"),
+            InlineKeyboardButton("Ніч (22:00)", callback_data=f"time_22_{days_to_add}_{lesson_day}"),
         ]
     ]
     
-    text = "Оберіть бажаний час отримання "
-    if lesson_type == "bonus":
-        text += "бонусного матеріалу:"
+    text = f"Оберіть бажаний час отримання "
+    if lesson_day is None:
+        text += f"бонусного матеріалу ({selected_date}):"
     else:
-        text += f"уроку {lesson_day}:"
+        text += f"уроку {lesson_day} ({selected_date}):"
     
     await bot.send_message(
         chat_id=user_id,
         text=text,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+
 
 async def send_bonus(bot, user_id: str) -> None:
     """Відправка бонусного матеріалу"""
@@ -294,12 +298,12 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif callback_data.startswith("next_tomorrow_"):
         lesson_day = int(callback_data.split("_")[2])
         await query.edit_message_text(text="Оберіть час отримання уроку:")
-        await ask_time_selection(context.bot, user_id, "lesson", lesson_day)
+        await ask_time_selection(context.bot, user_id, 1, lesson_day)  # 1 день = завтра
     
     elif callback_data.startswith("next_2days_"):
         lesson_day = int(callback_data.split("_")[2])
         await query.edit_message_text(text="Оберіть час отримання уроку:")
-        await ask_time_selection(context.bot, user_id, "lesson", lesson_day)
+        await ask_time_selection(context.bot, user_id, 2, lesson_day)  # 2 дні = післязавтра
     
     elif callback_data == "bonus_now":
         await query.edit_message_text(text="Відправляємо бонусний матеріал...")
@@ -307,29 +311,30 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     elif callback_data == "bonus_tomorrow":
         await query.edit_message_text(text="Оберіть час отримання бонусу:")
-        await ask_time_selection(context.bot, user_id, "bonus")
+        await ask_time_selection(context.bot, user_id, 1)  # 1 день = завтра
     
     elif callback_data == "bonus_2days":
         await query.edit_message_text(text="Оберіть час отримання бонусу:")
-        await ask_time_selection(context.bot, user_id, "bonus")
+        await ask_time_selection(context.bot, user_id, 2)  # 2 дні = післязавтра
     
     elif callback_data.startswith("time_"):
         parts = callback_data.split("_")
         hour = parts[1]
-        lesson_type = parts[2]
+        days_to_add = int(parts[2])
         lesson_day = parts[3] if len(parts) > 3 else None
         
         selected_time = f"{hour}:00"
+        selected_date = (datetime.now() + timedelta(days=days_to_add)).strftime('%Y-%m-%d')
         
-        if lesson_type == "bonus":
-            selected_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') if "tomorrow" in callback_data else (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+        if lesson_day is None:
+            # Бонусний матеріал
             user_data[user_id]["next_bonus_date"] = selected_date
             user_data[user_id]["next_bonus_time"] = selected_time
             await query.edit_message_text(
                 text=f"Ви отримаєте бонусний матеріал {selected_date} о {selected_time}."
             )
         else:
-            selected_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') if "tomorrow" in callback_data else (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+            # Звичайний урок
             user_data[user_id]["next_lesson_day"] = int(lesson_day)
             user_data[user_id]["next_lesson_date"] = selected_date
             user_data[user_id]["next_lesson_time"] = selected_time
