@@ -4,5 +4,9 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python course_bot.py
-    env: python
-    port: 10000
+    plan: free
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: PORT
+        value: 10000

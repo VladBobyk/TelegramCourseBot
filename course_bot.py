@@ -1,10 +1,11 @@
 ﻿import logging
 import os
 import json
-from server import keep_alive
+import time
+import requests
 from datetime import datetime, timedelta
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # Спроба імпортувати dotenv, продовжуємо, якщо не вдалося
@@ -25,6 +26,9 @@ if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == 'TELEGRAM_BOT_TOKEN':
     TELEGRAM_BOT_TOKEN = os.getenv('TOKEN')
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("Не вдалося знайти токен бота. Перевірте змінні середовища.")
+
+# URL додатку на Render - для підтримки активності
+RENDER_APP_URL = os.getenv('RENDER_APP_URL', 'https://telegramcoursebot-18ir.onrender.com')
 
 # Увімкнення логування
 logging.basicConfig(
@@ -160,7 +164,7 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
     
     lesson = LESSONS[day]
     
-    # Відправити вступне повідомлення, якщо це не перший день (вступ для першого дня відправляється в команді start)
+    # Відправити вступне повідомлення, якщо це не перший день
     if day > 1 and 'intro_message' in lesson:
         await bot.send_message(
             chat_id=user_id,
@@ -178,7 +182,6 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
             )
         except Exception as e:
             logger.error(f"Помилка при відправці відео: {e}")
-            # Спробувати відправити повідомлення про помилку
             try:
                 await bot.send_message(
                     chat_id=user_id,
@@ -195,7 +198,6 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
             parse_mode='Markdown'
         )
         
-        # Відправити документи
         if 'documents' in lesson:
             for doc in lesson['documents']:
                 try:
@@ -213,90 +215,176 @@ async def send_lesson(bot, user_id: str, day: int) -> None:
     save_user_data(user_data)
     
     if day < 3:
+        # Після уроків 1 і 2 показуємо кнопки для вибору дня наступного уроку
+        keyboard = [
+            [
+                InlineKeyboardButton("Отримати наступний урок зараз", callback_data=f"next_now_{day+1}"),
+            ],
+            [
+                InlineKeyboardButton("Завтра", callback_data=f"next_day_{day+1}"),
+            ],
+            [
+                InlineKeyboardButton("Через 2 дні", callback_data=f"next_2days_{day+1}"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await bot.send_message(
             chat_id=user_id, 
-            text=lesson['completion_message'],
-            parse_mode='Markdown'
+            text=f"Коли ви хочете отримати наступний урок?",
+            reply_markup=reply_markup
         )
     else:
-        # Після дня 3 відправити повідомлення про бонус
+        # Після дня 3 показуємо кнопки для бонусу
+        keyboard = [
+            [
+                InlineKeyboardButton("Отримати бонус зараз", callback_data="bonus_now"),
+            ],
+            [
+                InlineKeyboardButton("Завтра", callback_data="bonus_day"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await bot.send_message(
             chat_id=user_id,
-            text="Вітаємо! Ви завершили міні-курс! Завтра ви отримаєте спеціальний бонус.",
-            parse_mode='Markdown'
+            text="Вітаємо! Ви завершили основну частину курсу! Коли ви хочете отримати бонусний матеріал?",
+            reply_markup=reply_markup
         )
-        
-        # Якщо в тестовому режимі, відразу відправити бонусний контент
-        if TEST_MODE:
-            await send_bonus(bot, user_id)
 
-async def send_bonus(bot, user_id: str) -> None:
-    """Відправити бонусний контент користувачеві"""
-    bonus = LESSONS[4]
+async def ask_for_time_selection(bot, user_id: str, lesson_day: int, selected_date: str):
+    """Запитати користувача про вибір часу для отримання уроку"""
+    # Клавіатура з варіантами часу
+    keyboard = [
+        [
+            InlineKeyboardButton("Ранок (08:00)", callback_data=f"time_08_{lesson_day}_{selected_date}"),
+            InlineKeyboardButton("День (12:00)", callback_data=f"time_12_{lesson_day}_{selected_date}"),
+        ],
+        [
+            InlineKeyboardButton("Вечір (18:00)", callback_data=f"time_18_{lesson_day}_{selected_date}"),
+            InlineKeyboardButton("Ніч (22:00)", callback_data=f"time_22_{lesson_day}_{selected_date}"),
+        ],
+        [
+            InlineKeyboardButton("Скасувати", callback_data=f"cancel_{lesson_day}"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Спочатку відправити бонусне текстове повідомлення
     await bot.send_message(
         chat_id=user_id,
-        text=bonus['bonus_text'],
-        parse_mode='Markdown'
+        text=f"Оберіть бажаний час отримання уроку {lesson_day} ({selected_date}):",
+        reply_markup=reply_markup
     )
+
+async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обробка натискання кнопок для вибору часу отримання наступного уроку"""
+    query = update.callback_query
+    await query.answer()
     
-    # Потім відправити бонусне відео(а)
-    for video in bonus['videos']:
-        try:
-            await bot.send_video(
-                chat_id=user_id,
-                video=video['file_id'],
-                caption=video['caption']
-            )
-        except Exception as e:
-            logger.error(f"Помилка при відправці бонусного відео: {e}")
+    user_id = str(query.from_user.id)
+    callback_data = query.data
     
-    # Відправити інформацію про знижку
-    if 'post_bonus_text' in bonus:
-        await bot.send_message(
-            chat_id=user_id,
-            text=bonus['post_bonus_text'],
-            parse_mode='Markdown'
+    # Перевірка, чи є користувач в базі даних
+    if user_id not in user_data:
+        await query.edit_message_text(
+            text="Спочатку почніть курс за допомогою команди /start"
+        )
+        return
+    
+    if callback_data.startswith("next_now_"):
+        # Користувач хоче отримати урок одразу
+        lesson_day = int(callback_data.split("_")[2])
+        await query.edit_message_text(text=f"Відправляємо вам урок {lesson_day} прямо зараз!")
+        await send_lesson(context.bot, user_id, lesson_day)
+    
+    elif callback_data.startswith("next_day_"):
+        # Користувач хоче отримати урок завтра
+        lesson_day = int(callback_data.split("_")[2])
+        selected_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        await query.edit_message_text(text=f"Ви обрали отримання уроку {lesson_day} завтра ({selected_date}). Тепер оберіть час:")
+        await ask_for_time_selection(context.bot, user_id, lesson_day, selected_date)
+    
+    elif callback_data.startswith("next_2days_"):
+        # Користувач хоче отримати урок через 2 дні
+        lesson_day = int(callback_data.split("_")[2])
+        selected_date = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+        await query.edit_message_text(text=f"Ви обрали отримання уроку {lesson_day} через 2 дні ({selected_date}). Тепер оберіть час:")
+        await ask_for_time_selection(context.bot, user_id, lesson_day, selected_date)
+    
+    elif callback_data.startswith("time_"):
+        # Користувач обрав конкретний час
+        parts = callback_data.split("_")
+        hour = parts[1]
+        lesson_day = int(parts[2])
+        selected_date = parts[3]
+        
+        # Зберігаємо час у форматі HH:MM
+        selected_time = f"{hour}:00"
+        
+        # Оновлюємо дані користувача
+        user_data[user_id]["next_lesson_day"] = lesson_day
+        user_data[user_id]["next_lesson_date"] = selected_date
+        user_data[user_id]["next_lesson_time"] = selected_time
+        save_user_data(user_data)
+        
+        await query.edit_message_text(
+            text=f"Добре! Ви отримаєте урок {lesson_day} {selected_date} о {selected_time}."
         )
     
-    # Оновити статус користувача
-    user_data[user_id]['current_day'] = 4
-    user_data[user_id]['completed'] = True
-    save_user_data(user_data)
+    elif callback_data.startswith("cancel_"):
+        # Користувач скасував вибір часу
+        lesson_day = int(callback_data.split("_")[1])
+        await query.edit_message_text(
+            text=f"Вибір часу скасовано. Ви можете обрати інший час за допомогою команди /next."
+        )
+    
+    elif callback_data == "bonus_now":
+        # Користувач хоче отримати бонус зараз
+        await query.edit_message_text(text="Відправляємо вам бонусний матеріал прямо зараз!")
+        await send_bonus(context.bot, user_id)
+    
+    elif callback_data == "bonus_day":
+        # Користувач хоче отримати бонус завтра
+        selected_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        await query.edit_message_text(text=f"Ви обрали отримання бонусу завтра ({selected_date}). Тепер оберіть час:")
+        await ask_for_time_selection(context.bot, user_id, 4, selected_date)
 
-async def check_and_send_daily_lessons():
-    """Перевірити, чи користувачі повинні отримати свій наступний урок"""
-    # Пропустити, якщо в тестовому режимі
-    if TEST_MODE:
-        return
-        
+async def check_and_send_scheduled_lessons():
+    """Перевірити та відправити заплановані уроки з урахуванням часу"""
     try:
-        today = datetime.now().strftime('%Y-%m-%d')
+        now = datetime.now()
+        current_date = now.strftime('%Y-%m-%d')
+        current_time = now.strftime('%H:%M')
         
         # Створюємо новий екземпляр застосунку 
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
         
         for user_id, data in user_data.items():
-            # Пропустити користувачів, які завершили повний курс (включаючи бонус)
+            # Пропустити користувачів, які завершили повний курс
             if data.get('completed', False):
                 continue
                 
-            last_lesson_date = datetime.strptime(data['last_lesson_date'], '%Y-%m-%d')
-            next_lesson_date = last_lesson_date + timedelta(days=1)
-            
-            # Якщо час для наступного уроку
-            if next_lesson_date.strftime('%Y-%m-%d') <= today and data['current_day'] <= 3:
-                next_day = data['current_day'] + 1
+            # Перевірка на заплановану дату та час наступного уроку
+            if ("next_lesson_date" in data and 
+                "next_lesson_time" in data and
+                data["next_lesson_date"] <= current_date and
+                data["next_lesson_time"] <= current_time):
+                
+                next_day = data.get("next_lesson_day", data['current_day'] + 1)
                 try:
                     await send_lesson(app.bot, user_id, next_day)
-                    logger.info(f"Відправлено урок {next_day} користувачу {user_id}")
+                    # Видаляємо заплановані дані після відправки
+                    for key in ["next_lesson_date", "next_lesson_time", "next_lesson_day"]:
+                        if key in data:
+                            del data[key]
+                    save_user_data(user_data)
+                    logger.info(f"Відправлено запланований урок {next_day} користувачу {user_id}")
                 except Exception as e:
                     logger.error(f"Помилка при відправці уроку {next_day} користувачу {user_id}: {e}")
         
         await app.shutdown()
     except Exception as e:
-        logger.error(f"Помилка при перевірці та відправці щоденних уроків: {e}")
+        logger.error(f"Помилка при перевірці та відправці запланованих уроків: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Відправити повідомлення, коли видано команду /help"""
@@ -306,6 +394,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/start - Почати курс\n"
         "/help - Показати це повідомлення\n"
         "/status - Перевірити ваш прогрес\n"
+        "/next - Отримати наступний урок (якщо доступний)\n"
         "/bonus - Отримати бонусний матеріал (якщо доступний)\n"
         "/test_on - Включити тестовий режим (всі повідомлення відразу)\n"
         "/test_off - Виключити тестовий режим (стандартний режим)"
@@ -325,24 +414,54 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if data.get('completed', False):
         await update.message.reply_text("Ви повністю завершили курс, включаючи бонусний матеріал! Вітаємо!")
     elif current_day >= 3:
-        next_lesson_date = datetime.strptime(data['last_lesson_date'], '%Y-%m-%d') + timedelta(days=1)
-        today = datetime.now()
-        
-        if next_lesson_date.date() <= today.date():
+        if "next_lesson_date" in data and data.get("next_lesson_day") == 4:
+            next_date = data["next_lesson_date"]
             await update.message.reply_text(
-                "Ви завершили основну частину курсу! Бонусний матеріал готовий для вас. Використайте /bonus щоб отримати його зараз."
+                f"Ви завершили основну частину курсу!\n"
+                f"Ваш бонусний матеріал буде надіслано {next_date}.\n"
+                f"Або скористайтесь командою /bonus, щоб отримати його зараз."
             )
         else:
             await update.message.reply_text(
-                "Ви завершили основну частину курсу!\n"
-                f"Ваш бонусний матеріал буде надіслано {next_lesson_date.strftime('%Y-%m-%d')}."
+                "Ви завершили основну частину курсу! Бонусний матеріал готовий для вас.\n"
+                "Використайте /bonus щоб отримати його зараз."
             )
     else:
-        next_lesson_date = datetime.strptime(data['last_lesson_date'], '%Y-%m-%d') + timedelta(days=1)
+        if "next_lesson_date" in data:
+            next_day = data.get("next_lesson_day", current_day + 1)
+            next_date = data["next_lesson_date"]
+            await update.message.reply_text(
+                f"Ви на дні {current_day} курсу.\n"
+                f"Ваш наступний урок (День {next_day}) заплановано на {next_date}.\n"
+                f"Використайте /next щоб отримати його прямо зараз."
+            )
+        else:
+            await update.message.reply_text(
+                f"Ви на дні {current_day} курсу.\n"
+                f"Використайте /next щоб отримати наступний урок."
+            )
+
+async def next_lesson_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Відправити наступний урок на запит користувача"""
+    user_id = str(update.effective_user.id)
+    
+    if user_id not in user_data:
+        await update.message.reply_text("Ви ще не почали курс. Використайте /start щоб почати.")
+        return
+    
+    data = user_data[user_id]
+    current_day = data['current_day']
+    
+    if data.get('completed', False):
+        await update.message.reply_text("Ви вже завершили весь курс, включаючи бонусний матеріал!")
+    elif current_day >= 3:
         await update.message.reply_text(
-            f"Ви на дні {current_day} курсу.\n"
-            f"Ваш наступний урок (День {current_day+1}) буде надіслано {next_lesson_date.strftime('%Y-%m-%d')}."
+            "Ви завершили основну частину курсу! Для отримання бонусного матеріалу використайте команду /bonus."
         )
+    else:
+        next_day = current_day + 1
+        await update.message.reply_text(f"Відправляємо вам урок {next_day}...")
+        await send_lesson(context.bot, user_id, next_day)
 
 async def bonus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Відправити бонусний контент негайно, якщо користувач завершив основний курс"""
@@ -384,100 +503,118 @@ async def test_all_lessons(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     # Відправити всі уроки з короткими затримками
     await update.message.reply_text("📚 Урок 1:")
-    # Відправити вступ для уроку 1
-    await update.message.reply_text(
-        LESSONS[1]['intro_message'],
-        parse_mode='Markdown'
-    )
+    # Відправити вступ для уроку
     await send_lesson(context.bot, user_id, 1)
+    await context.bot.send_message(chat_id=user_id, text="⏳ Затримка між уроками...")
+    time.sleep(2)
     
-    await update.message.reply_text("📚 Урок 2:")
-    # Відправити вступ для уроку 2
-    await update.message.reply_text(
-        LESSONS[2]['intro_message'],
-        parse_mode='Markdown'
-    )
+    await context.bot.send_message(chat_id=user_id, text="📚 Урок 2:")
     await send_lesson(context.bot, user_id, 2)
+    await context.bot.send_message(chat_id=user_id, text="⏳ Затримка між уроками...")
+    time.sleep(2)
     
-    await update.message.reply_text("📚 Урок 3:")
-    # Відправити вступ для уроку 3
-    await update.message.reply_text(
-        LESSONS[3]['intro_message'],
-        parse_mode='Markdown'
-    )
+    await context.bot.send_message(chat_id=user_id, text="📚 Урок 3:")
     await send_lesson(context.bot, user_id, 3)
+    await context.bot.send_message(chat_id=user_id, text="⏳ Затримка між уроками...")
+    time.sleep(2)
     
-    # Бонус відправляється автоматично після уроку 3 в тестовому режимі
+    await context.bot.send_message(chat_id=user_id, text="🎁 Бонусний матеріал:")
+    await send_bonus(context.bot, user_id)
     
-    await update.message.reply_text("✅ Тестування завершено! Всі повідомлення відправлено.")
+    await context.bot.send_message(chat_id=user_id, text="✅ Тестування завершено. Всі уроки відправлено.")
 
-async def test_mode_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def test_mode_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Увімкнути тестовий режим"""
     global TEST_MODE
     TEST_MODE = True
-    await update.message.reply_text(
-        "🔧 Тестовий режим УВІМКНЕНО!\n"
-        "Тепер ви можете отримати всі уроки одразу командою /test_all\n"
-        "Вимкнути тестовий режим: /test_off"
-    )
+    await update.message.reply_text("🧪 Тестовий режим увімкнено. Уроки будуть доступні без обмежень часу.")
 
-async def test_mode_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def test_mode_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Вимкнути тестовий режим"""
     global TEST_MODE
     TEST_MODE = False
+    await update.message.reply_text("✅ Тестовий режим вимкнено. Бот працює у звичайному режимі.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обробка звичайних повідомлень"""
     await update.message.reply_text(
-        "🔧 Тестовий режим ВИМКНЕНО!\n"
-        "Бот працює в звичайному режимі - один урок на день."
+        "Привіт! Я бот для курсу по бʼюті-освіті. Використайте /start щоб почати курс або /help для додаткової інформації."
     )
 
-def main() -> None:
-    """Запустити бота"""
+# Функція для регулярного пінгування застосунку, щоб запобігти "засинанню" на Render
+def ping_server():
+    """Пінгує застосунок, щоб запобігти засинанню на Render"""
     try:
-        # Перевірка токену ще раз для впевненості
-        if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == 'TELEGRAM_BOT_TOKEN':
-            logger.error("Токен бота не знайдено або він неправильний. Перевірте змінні середовища.")
-            raise ValueError("Неправильний токен бота")
-            
-        # Створити Application та передати токен бота
-        application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-        # Зареєструвати обробники команд
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("status", status_command))
-        application.add_handler(CommandHandler("bonus", bonus_command))
-        
-        # Тестові команди
-        application.add_handler(CommandHandler("test_all", test_all_lessons))
-        application.add_handler(CommandHandler("test_on", test_mode_on))
-        application.add_handler(CommandHandler("test_off", test_mode_off))
-
-        # Налаштувати планувальник для щоденних уроків
-        scheduler = BackgroundScheduler()
-        scheduler.add_job(check_and_send_daily_lessons, 'interval', hours=1)  # Перевіряти кожну годину
-        scheduler.start()
-        
-        # Обробка налаштувань webhook та polling для розгортання Render
-        PORT = int(os.environ.get('PORT', 10000))
-        
-        # Правильне отримання URL для вебхука з середовища
-        WEBHOOK_URL = os.environ.get('https://telegramcoursebot-18ir.onrender.com')
-
-        if WEBHOOK_URL:
-            logger.info(f"Запуск webhook на порту {PORT} з URL {WEBHOOK_URL}")
-            application.run_webhook(
-                listen="0.0.0.0",
-                port=PORT,
-                url_path=TELEGRAM_BOT_TOKEN,
-                webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_BOT_TOKEN}"
-            )
-        else:
-            logger.info("URL вебхука не знайдено, запуск в режимі polling")
-            keep_alive()
-            application.run_polling(allowed_updates=Update.ALL_TYPES)
+        response = requests.get(RENDER_APP_URL)
+        logger.info(f"Ping server response: {response.status_code}")
     except Exception as e:
-        logger.error(f"Помилка при запуску бота: {e}")
-        raise
+        logger.error(f"Помилка при пінгуванні сервера: {e}")
 
-if __name__ == '__main__':
+# Функція для створення веб-сервера на Flask для підтримки активності бота
+def setup_web_server():
+    """Налаштування простого веб-сервера для підтримки активності на Render"""
+    from flask import Flask
+    
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def home():
+        return "Telegram Course Bot is running!"
+    
+    @app.route('/health')
+    def health():
+        return "OK", 200
+    
+    # Запустити сервер у фоновому режимі
+    import threading
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))).start()
+
+def setup_scheduler():
+    """Налаштування планувальника для щогодинної перевірки та відправки уроків"""
+    scheduler = BackgroundScheduler()
+    
+    # Заплановати перевірку кожну годину для точнішої відправки за часом
+    scheduler.add_job(
+        check_and_send_scheduled_lessons,
+        'cron',
+        minute=0  # Перевіряємо на початку кожної години
+    )
+    
+    # Додати задачу для пінгування сервера кожні 10 хвилин
+    scheduler.add_job(
+        ping_server,
+        'interval',
+        minutes=10
+    )
+    
+    scheduler.start()
+    logger.info("Планувальник запущено!")
+
+def main() -> None:
+    """Основна функція для запуску бота"""
+    # Створюємо новий екземпляр застосунку
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Додаємо обробники команд
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("next", next_lesson_command))
+    application.add_handler(CommandHandler("bonus", bonus_command))
+    application.add_handler(CommandHandler("test", test_all_lessons))
+    application.add_handler(CommandHandler("test_on", test_mode_on_command))
+    application.add_handler(CommandHandler("test_off", test_mode_off_command))
+    application.add_handler(CallbackQueryHandler(handle_button_click))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Запускаємо планувальник для щоденної перевірки та відправки уроків
+    setup_scheduler()
+    
+    # Запускаємо веб-сервер для підтримки активності на Render
+    setup_web_server()
+    
+    # Запускаємо бота
+    application.run_polling()
+
+if __name__ == "__main__":
     main()

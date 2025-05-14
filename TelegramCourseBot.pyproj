@@ -16,7 +16,8 @@
     <LaunchProvider>Standard Python launcher</LaunchProvider>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
     <!-- Використовуємо значення з .env файлу замість явного запису токена тут -->
-    <Environment></Environment>
+    <Environment>
+    </Environment>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -28,6 +29,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="course_bot.py" />
+    <Compile Include="send_lessons.py" />
     <Compile Include="server.py" />
     <Compile Include="TelegramCourseBot.py" />
   </ItemGroup>
