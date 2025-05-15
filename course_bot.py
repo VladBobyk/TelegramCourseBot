@@ -290,6 +290,9 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     callback_data = query.data
     
+    # Debug log to see what's happening
+    logger.info(f"Button clicked: {callback_data} by user {user_id}")
+    
     if callback_data.startswith("next_now_"):
         lesson_day = int(callback_data.split("_")[2])
         await query.edit_message_text(text=f"Відправляємо урок {lesson_day}...")
@@ -317,33 +320,35 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(text="Оберіть час отримання бонусу:")
         await ask_time_selection(context.bot, user_id, 2)  # 2 дні = післязавтра
     
-    # In the handle_button_click function, modify the time_ case:
     elif callback_data.startswith("time_"):
         parts = callback_data.split("_")
         selected_time = parts[1]  # Now gets the full time with format HH:MM
         days_to_add = int(parts[2])
-        lesson_day = parts[3] if len(parts) > 3 and parts[3] != "None" else None
-    
+        lesson_day_str = parts[3] if len(parts) > 3 else None
+        
         selected_date = (datetime.now() + timedelta(days=days_to_add)).strftime('%Y-%m-%d')
-    
-        if lesson_day is None:
-        # Бонусний матеріал
+        
+        if lesson_day_str is None or lesson_day_str == "None":
+            # Бонусний матеріал
             user_data[user_id]["next_bonus_date"] = selected_date
-        user_data[user_id]["next_bonus_time"] = selected_time
-        await query.edit_message_text(
-            text=f"Ви отримаєте бонусний матеріал {selected_date} о {selected_time}."
-        )
-    else:
-        # Звичайний урок
-        user_data[user_id]["next_lesson_day"] = int(lesson_day)
-        user_data[user_id]["next_lesson_date"] = selected_date
-        user_data[user_id]["next_lesson_time"] = selected_time
-        await query.edit_message_text(
-            text=f"Ви отримаєте урок {lesson_day} {selected_date} о {selected_time}."
-        )
-    
-    save_user_data(user_data)
-    logger.info(f"Scheduled for user {user_id}: {'bonus' if lesson_day is None else f'lesson {lesson_day}'} at {selected_date} {selected_time}")
+            user_data[user_id]["next_bonus_time"] = selected_time
+            await query.edit_message_text(
+                text=f"Ви отримаєте бонусний матеріал {selected_date} о {selected_time}."
+            )
+            logger.info(f"Scheduled bonus for user {user_id} at {selected_date} {selected_time}")
+        else:
+            # Звичайний урок
+            lesson_day = int(lesson_day_str)
+            user_data[user_id]["next_lesson_day"] = lesson_day
+            user_data[user_id]["next_lesson_date"] = selected_date
+            user_data[user_id]["next_lesson_time"] = selected_time
+            await query.edit_message_text(
+                text=f"Ви отримаєте урок {lesson_day} {selected_date} о {selected_time}."
+            )
+            logger.info(f"Scheduled lesson {lesson_day} for user {user_id} at {selected_date} {selected_time}")
+        
+        # Important: Save data immediately after updating
+        save_user_data(user_data)
 
 async def check_and_send_scheduled_lessons():
     """Перевірка та відправка запланованих уроків"""
@@ -394,6 +399,17 @@ async def check_and_send_scheduled_lessons():
         
     except Exception as e:
         logger.error(f"Помилка перевірки уроків: {e}")
+
+
+
+def setup_scheduler():
+    """Налаштування планувальника"""
+    scheduler = BackgroundScheduler()
+    # Check every 5 minutes instead of hourly
+    scheduler.add_job(check_and_send_scheduled_lessons, 'interval', minutes=5)
+    scheduler.add_job(ping_server, 'interval', minutes=10)
+    scheduler.start()
+    logger.info("Планувальник запущено")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /help"""
@@ -560,6 +576,9 @@ async def debug_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
     debug_info = f"Debug інформація для користувача {user_id}:\n\n"
     debug_info += f"Поточний день: {data.get('current_day', 'Не встановлено')}\n"
     debug_info += f"Завершено курс: {data.get('completed', False)}\n"
+    debug_info += f"Дата початку: {data.get('start_date', 'Не встановлено')}\n"
+    debug_info += f"Остання дата уроку: {data.get('last_lesson_date', 'Не встановлено')}\n"
+    debug_info += f"\nВсі дані користувача: {json.dumps(data, ensure_ascii=False, indent=2)}\n"
     
     if "next_lesson_date" in data:
         debug_info += f"\nЗапланований урок {data.get('next_lesson_day')}:\n"
@@ -598,6 +617,11 @@ async def debug_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
                 debug_info += "Час відправки минув! Перевірте роботу планувальника.\n"
         except Exception as e:
             debug_info += f"Помилка обчислення часу: {str(e)}\n"
+            
+    # Check for scheduling information in the user message
+    msg = update.effective_message.reply_to_message
+    if msg:
+        debug_info += f"\nПов'язане повідомлення: {msg.text[:100]}...\n"
     
     await update.message.reply_text(debug_info)
 
@@ -623,34 +647,85 @@ async def set_test_time_command(update: Update, context: ContextTypes.DEFAULT_TY
         # Validate format
         datetime.strptime(f"{test_date} {test_time}", '%Y-%m-%d %H:%M')
         
-        # Set next lesson/bonus time to test time for immediate execution
-        if "next_lesson_date" in user_data[user_id]:
-            user_data[user_id]["next_lesson_date"] = test_date
-            user_data[user_id]["next_lesson_time"] = test_time
+        # Check the user's current scheduling status
+        current_data = user_data[user_id]
+        logger.info(f"Current user data for {user_id}: {current_data}")
+        
+        has_next_lesson = "next_lesson_date" in current_data and "next_lesson_time" in current_data
+        has_next_bonus = "next_bonus_date" in current_data and "next_bonus_time" in current_data
+        
+        if has_next_lesson:
+            current_data["next_lesson_date"] = test_date
+            current_data["next_lesson_time"] = test_time
             save_user_data(user_data)
             await update.message.reply_text(
-                f"Тестовий час для уроку встановлено на {test_date} {test_time}.\n"
+                f"Тестовий час для уроку {current_data.get('next_lesson_day', '?')} встановлено на {test_date} {test_time}.\n"
                 "Використайте /test_scheduler для перевірки відправки."
             )
-        elif "next_bonus_date" in user_data[user_id]:
-            user_data[user_id]["next_bonus_date"] = test_date
-            user_data[user_id]["next_bonus_time"] = test_time
+        elif has_next_bonus:
+            current_data["next_bonus_date"] = test_date
+            current_data["next_bonus_time"] = test_time
             save_user_data(user_data)
             await update.message.reply_text(
                 f"Тестовий час для бонусу встановлено на {test_date} {test_time}.\n"
                 "Використайте /test_scheduler для перевірки відправки."
             )
         else:
-            await update.message.reply_text(
-                "У вас немає запланованих уроків або бонусів.\n"
-                "Спочатку заплануйте урок або бонус."
-            )
+            # Special case: Let's check if the message about scheduling exists
+            msg = update.effective_message.reply_to_message
+            if msg and "Ви отримаєте бонусний матеріал" in msg.text:
+                # Extract date and time from the message if possible
+                current_data["next_bonus_date"] = test_date  # We'll use the user-provided date/time
+                current_data["next_bonus_time"] = test_time
+                save_user_data(user_data)
+                await update.message.reply_text(
+                    f"Тестовий час для бонусу встановлено на {test_date} {test_time} (відновлено з повідомлення).\n"
+                    "Використайте /test_scheduler для перевірки відправки."
+                )
+            elif msg and "Ви отримаєте урок" in msg.text:
+                # Try to extract lesson number
+                import re
+                match = re.search(r"урок (\d+)", msg.text)
+                lesson_day = int(match.group(1)) if match else current_data.get('current_day', 1) + 1
+                
+                current_data["next_lesson_day"] = lesson_day
+                current_data["next_lesson_date"] = test_date
+                current_data["next_lesson_time"] = test_time
+                save_user_data(user_data)
+                await update.message.reply_text(
+                    f"Тестовий час для уроку {lesson_day} встановлено на {test_date} {test_time} (відновлено з повідомлення).\n"
+                    "Використайте /test_scheduler для перевірки відправки."
+                )
+            else:
+                # We can't find scheduled info, let's create it based on current day
+                current_day = current_data.get('current_day', 1)
+                if current_day >= 3:
+                    # Should be bonus next
+                    current_data["next_bonus_date"] = test_date
+                    current_data["next_bonus_time"] = test_time
+                    save_user_data(user_data)
+                    await update.message.reply_text(
+                        f"Тестовий час для бонусу встановлено на {test_date} {test_time} (створено нове розклад).\n"
+                        "Використайте /test_scheduler для перевірки відправки."
+                    )
+                else:
+                    # Should be next lesson
+                    next_day = current_day + 1
+                    current_data["next_lesson_day"] = next_day
+                    current_data["next_lesson_date"] = test_date
+                    current_data["next_lesson_time"] = test_time
+                    save_user_data(user_data)
+                    await update.message.reply_text(
+                        f"Тестовий час для уроку {next_day} встановлено на {test_date} {test_time} (створено нове розклад).\n"
+                        "Використайте /test_scheduler для перевірки відправки."
+                    )
     except ValueError:
         await update.message.reply_text(
             "Неправильний формат дати/часу.\n"
             "Використайте формат: YYYY-MM-DD HH:MM"
         )
     except Exception as e:
+        logger.error(f"Error in set_test_time: {str(e)}")
         await update.message.reply_text(f"Помилка: {str(e)}")
 
 

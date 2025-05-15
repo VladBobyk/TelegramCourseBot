@@ -85,4 +85,3 @@ async def check_and_send_scheduled_lessons():
 
 if __name__ == "__main__":
     asyncio.run(check_and_send_scheduled_lessons())
-"""
