@@ -510,14 +510,157 @@ def setup_web_server():
         target=lambda: app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
     ).start()
 
-def setup_scheduler():
-    """Налаштування планувальника"""
-    scheduler = BackgroundScheduler()
-    # Check every 5 minutes instead of hourly
-    scheduler.add_job(check_and_send_scheduled_lessons, 'interval', minutes=5)
-    scheduler.add_job(ping_server, 'interval', minutes=10)
-    scheduler.start()
-    logger.info("Планувальник запущено")
+async def test_scheduler_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /test_scheduler для тестування розкладу"""
+    user_id = str(update.effective_user.id)
+    
+    if user_id not in user_data:
+        await update.message.reply_text("Спочатку почніть курс: /start")
+        return
+    
+    await update.message.reply_text("Тестуємо розклад уроків. Симулюємо заплановану відправку...")
+    
+    # Create a copy of user data for testing purposes
+    test_data = {user_id: user_data[user_id].copy()}
+    
+    # If user has a scheduled lesson, simulate it's time to send
+    if "next_lesson_date" in test_data[user_id] and "next_lesson_time" in test_data[user_id]:
+        next_day = test_data[user_id].get("next_lesson_day", test_data[user_id]['current_day'] + 1)
+        await update.message.reply_text(f"Знайдено запланований урок {next_day} на {test_data[user_id]['next_lesson_date']} о {test_data[user_id]['next_lesson_time']}. Відправляємо...")
+        await send_lesson(context.bot, user_id, next_day)
+        # Remove scheduling data after sending
+        for key in ["next_lesson_date", "next_lesson_time", "next_lesson_day"]:
+            if key in user_data[user_id]:
+                user_data[user_id].pop(key)
+        save_user_data(user_data)
+        return
+        
+    # If user has a scheduled bonus, simulate it's time to send
+    if "next_bonus_date" in test_data[user_id] and "next_bonus_time" in test_data[user_id]:
+        await update.message.reply_text(f"Знайдено запланований бонус на {test_data[user_id]['next_bonus_date']} о {test_data[user_id]['next_bonus_time']}. Відправляємо...")
+        await send_bonus(context.bot, user_id)
+        # Remove scheduling data after sending
+        for key in ["next_bonus_date", "next_bonus_time"]:
+            if key in user_data[user_id]:
+                user_data[user_id].pop(key)
+        save_user_data(user_data)
+        return
+    
+    await update.message.reply_text("Немає запланованих уроків або бонусів для тестування.")
+
+async def debug_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /debug_schedule для перегляду розкладу"""
+    user_id = str(update.effective_user.id)
+    
+    if user_id not in user_data:
+        await update.message.reply_text("Спочатку почніть курс: /start")
+        return
+    
+    data = user_data[user_id]
+    debug_info = f"Debug інформація для користувача {user_id}:\n\n"
+    debug_info += f"Поточний день: {data.get('current_day', 'Не встановлено')}\n"
+    debug_info += f"Завершено курс: {data.get('completed', False)}\n"
+    
+    if "next_lesson_date" in data:
+        debug_info += f"\nЗапланований урок {data.get('next_lesson_day')}:\n"
+        debug_info += f"Дата: {data.get('next_lesson_date')}\n"
+        debug_info += f"Час: {data.get('next_lesson_time')}\n"
+        
+        # Calculate time until send
+        try:
+            scheduled_time = datetime.strptime(f"{data['next_lesson_date']} {data['next_lesson_time']}", '%Y-%m-%d %H:%M')
+            now = datetime.now()
+            time_diff = scheduled_time - now
+            if time_diff.total_seconds() > 0:
+                hours, remainder = divmod(time_diff.total_seconds(), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                debug_info += f"Залишилось часу: {int(hours)} год {int(minutes)} хв\n"
+            else:
+                debug_info += "Час відправки минув! Перевірте роботу планувальника.\n"
+        except Exception as e:
+            debug_info += f"Помилка обчислення часу: {str(e)}\n"
+    
+    if "next_bonus_date" in data:
+        debug_info += f"\nЗапланований бонус:\n"
+        debug_info += f"Дата: {data.get('next_bonus_date')}\n"
+        debug_info += f"Час: {data.get('next_bonus_time')}\n"
+        
+        # Calculate time until send
+        try:
+            scheduled_time = datetime.strptime(f"{data['next_bonus_date']} {data['next_bonus_time']}", '%Y-%m-%d %H:%M')
+            now = datetime.now()
+            time_diff = scheduled_time - now
+            if time_diff.total_seconds() > 0:
+                hours, remainder = divmod(time_diff.total_seconds(), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                debug_info += f"Залишилось часу: {int(hours)} год {int(minutes)} хв\n"
+            else:
+                debug_info += "Час відправки минув! Перевірте роботу планувальника.\n"
+        except Exception as e:
+            debug_info += f"Помилка обчислення часу: {str(e)}\n"
+    
+    await update.message.reply_text(debug_info)
+
+
+async def set_test_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /set_test_time для встановлення тестового часу"""
+    user_id = str(update.effective_user.id)
+    
+    if user_id not in user_data:
+        await update.message.reply_text("Спочатку почніть курс: /start")
+        return
+    
+    if not context.args or len(context.args) != 2:
+        await update.message.reply_text(
+            "Використання: /set_test_time YYYY-MM-DD HH:MM\n"
+            "Наприклад: /set_test_time 2025-05-16 08:00"
+        )
+        return
+    
+    try:
+        test_date = context.args[0]
+        test_time = context.args[1]
+        # Validate format
+        datetime.strptime(f"{test_date} {test_time}", '%Y-%m-%d %H:%M')
+        
+        # Set next lesson/bonus time to test time for immediate execution
+        if "next_lesson_date" in user_data[user_id]:
+            user_data[user_id]["next_lesson_date"] = test_date
+            user_data[user_id]["next_lesson_time"] = test_time
+            save_user_data(user_data)
+            await update.message.reply_text(
+                f"Тестовий час для уроку встановлено на {test_date} {test_time}.\n"
+                "Використайте /test_scheduler для перевірки відправки."
+            )
+        elif "next_bonus_date" in user_data[user_id]:
+            user_data[user_id]["next_bonus_date"] = test_date
+            user_data[user_id]["next_bonus_time"] = test_time
+            save_user_data(user_data)
+            await update.message.reply_text(
+                f"Тестовий час для бонусу встановлено на {test_date} {test_time}.\n"
+                "Використайте /test_scheduler для перевірки відправки."
+            )
+        else:
+            await update.message.reply_text(
+                "У вас немає запланованих уроків або бонусів.\n"
+                "Спочатку заплануйте урок або бонус."
+            )
+    except ValueError:
+        await update.message.reply_text(
+            "Неправильний формат дати/часу.\n"
+            "Використайте формат: YYYY-MM-DD HH:MM"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"Помилка: {str(e)}")
+
+
+async def check_scheduler_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /check_scheduler для ручної перевірки планувальника"""
+    await update.message.reply_text("Запускаємо перевірку планувальника...")
+    await check_and_send_scheduled_lessons()
+    await update.message.reply_text("Перевірка планувальника завершена.")
+
+
 
 def main() -> None:
     """Запуск бота"""
@@ -528,6 +671,11 @@ def main() -> None:
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("next", next_lesson_command))
     application.add_handler(CommandHandler("bonus", bonus_command))
+    application.add_handler(CommandHandler("test_scheduler", test_scheduler_command))
+    application.add_handler(CommandHandler("debug_schedule", debug_schedule_command))
+    application.add_handler(CommandHandler("set_test_time", set_test_time_command))
+    # And add the command handler
+    application.add_handler(CommandHandler("check_scheduler", check_scheduler_command))
     application.add_handler(CallbackQueryHandler(handle_button_click))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, 
         lambda u, c: u.message.reply_text("Використайте /start для початку курсу.")))
