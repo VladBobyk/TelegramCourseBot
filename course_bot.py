@@ -199,12 +199,12 @@ async def ask_time_selection(bot, user_id: str, days_to_add: int, lesson_day: in
     
     keyboard = [
         [
-            InlineKeyboardButton("Ранок (08:00)", callback_data=f"time_08_{days_to_add}_{lesson_day}"),
-            InlineKeyboardButton("День (12:00)", callback_data=f"time_12_{days_to_add}_{lesson_day}"),
+            InlineKeyboardButton("Ранок (08:00)", callback_data=f"time_08:00_{days_to_add}_{lesson_day}"),
+            InlineKeyboardButton("День (12:00)", callback_data=f"time_12:00_{days_to_add}_{lesson_day}"),
         ],
         [
-            InlineKeyboardButton("Вечір (18:00)", callback_data=f"time_18_{days_to_add}_{lesson_day}"),
-            InlineKeyboardButton("Ніч (22:00)", callback_data=f"time_22_{days_to_add}_{lesson_day}"),
+            InlineKeyboardButton("Вечір (18:00)", callback_data=f"time_18:00_{days_to_add}_{lesson_day}"),
+            InlineKeyboardButton("Ніч (22:00)", callback_data=f"time_22:00_{days_to_add}_{lesson_day}"),
         ]
     ]
     
@@ -317,32 +317,33 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(text="Оберіть час отримання бонусу:")
         await ask_time_selection(context.bot, user_id, 2)  # 2 дні = післязавтра
     
+    # In the handle_button_click function, modify the time_ case:
     elif callback_data.startswith("time_"):
         parts = callback_data.split("_")
-        hour = parts[1]
+        selected_time = parts[1]  # Now gets the full time with format HH:MM
         days_to_add = int(parts[2])
-        lesson_day = parts[3] if len(parts) > 3 else None
-        
-        selected_time = f"{hour}:00"
+        lesson_day = parts[3] if len(parts) > 3 and parts[3] != "None" else None
+    
         selected_date = (datetime.now() + timedelta(days=days_to_add)).strftime('%Y-%m-%d')
-        
+    
         if lesson_day is None:
-            # Бонусний матеріал
+        # Бонусний матеріал
             user_data[user_id]["next_bonus_date"] = selected_date
-            user_data[user_id]["next_bonus_time"] = selected_time
-            await query.edit_message_text(
-                text=f"Ви отримаєте бонусний матеріал {selected_date} о {selected_time}."
-            )
-        else:
-            # Звичайний урок
-            user_data[user_id]["next_lesson_day"] = int(lesson_day)
-            user_data[user_id]["next_lesson_date"] = selected_date
-            user_data[user_id]["next_lesson_time"] = selected_time
-            await query.edit_message_text(
-                text=f"Ви отримаєте урок {lesson_day} {selected_date} о {selected_time}."
-            )
-        
-        save_user_data(user_data)
+        user_data[user_id]["next_bonus_time"] = selected_time
+        await query.edit_message_text(
+            text=f"Ви отримаєте бонусний матеріал {selected_date} о {selected_time}."
+        )
+    else:
+        # Звичайний урок
+        user_data[user_id]["next_lesson_day"] = int(lesson_day)
+        user_data[user_id]["next_lesson_date"] = selected_date
+        user_data[user_id]["next_lesson_time"] = selected_time
+        await query.edit_message_text(
+            text=f"Ви отримаєте урок {lesson_day} {selected_date} о {selected_time}."
+        )
+    
+    save_user_data(user_data)
+    logger.info(f"Scheduled for user {user_id}: {'bonus' if lesson_day is None else f'lesson {lesson_day}'} at {selected_date} {selected_time}")
 
 async def check_and_send_scheduled_lessons():
     """Перевірка та відправка запланованих уроків"""
@@ -351,42 +352,46 @@ async def check_and_send_scheduled_lessons():
         current_date = now.strftime('%Y-%m-%d')
         current_time = now.strftime('%H:%M')
         
-        app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+        # Create a persistent application instance
+        bot = Application.builder().token(TELEGRAM_BOT_TOKEN).build().bot
         
         for user_id, data in user_data.items():
             if data.get('completed', False):
                 continue
                 
-            # Перевірка запланованих уроків
+            # Перевірка запланованих уроків - improved time comparison
             if ("next_lesson_date" in data and 
-                "next_lesson_time" in data and
-                data["next_lesson_date"] <= current_date and
-                data["next_lesson_time"] <= current_time):
+                "next_lesson_time" in data):
                 
-                next_day = data.get("next_lesson_day", data['current_day'] + 1)
-                try:
-                    await send_lesson(app.bot, user_id, next_day)
-                    for key in ["next_lesson_date", "next_lesson_time", "next_lesson_day"]:
-                        data.pop(key, None)
-                    save_user_data(user_data)
-                except Exception as e:
-                    logger.error(f"Помилка відправки уроку {next_day}: {e}")
+                scheduled_datetime = datetime.strptime(f"{data['next_lesson_date']} {data['next_lesson_time']}", '%Y-%m-%d %H:%M')
+                if scheduled_datetime <= now:
+                    next_day = data.get("next_lesson_day", data['current_day'] + 1)
+                    try:
+                        logger.info(f"Sending scheduled lesson {next_day} to user {user_id}")
+                        await send_lesson(bot, user_id, next_day)
+                        # Remove scheduling data after sending
+                        for key in ["next_lesson_date", "next_lesson_time", "next_lesson_day"]:
+                            data.pop(key, None)
+                        save_user_data(user_data)
+                    except Exception as e:
+                        logger.error(f"Помилка відправки уроку {next_day}: {e}")
             
-            # Перевірка запланованих бонусів
+            # Перевірка запланованих бонусів - improved time comparison
             if ("next_bonus_date" in data and 
-                "next_bonus_time" in data and
-                data["next_bonus_date"] <= current_date and
-                data["next_bonus_time"] <= current_time):
+                "next_bonus_time" in data):
                 
-                try:
-                    await send_bonus(app.bot, user_id)
-                    for key in ["next_bonus_date", "next_bonus_time"]:
-                        data.pop(key, None)
-                    save_user_data(user_data)
-                except Exception as e:
-                    logger.error(f"Помилка відправки бонусу: {e}")
+                scheduled_datetime = datetime.strptime(f"{data['next_bonus_date']} {data['next_bonus_time']}", '%Y-%m-%d %H:%M')
+                if scheduled_datetime <= now:
+                    try:
+                        logger.info(f"Sending scheduled bonus to user {user_id}")
+                        await send_bonus(bot, user_id)
+                        # Remove scheduling data after sending
+                        for key in ["next_bonus_date", "next_bonus_time"]:
+                            data.pop(key, None)
+                        save_user_data(user_data)
+                    except Exception as e:
+                        logger.error(f"Помилка відправки бонусу: {e}")
         
-        await app.shutdown()
     except Exception as e:
         logger.error(f"Помилка перевірки уроків: {e}")
 
@@ -508,7 +513,8 @@ def setup_web_server():
 def setup_scheduler():
     """Налаштування планувальника"""
     scheduler = BackgroundScheduler()
-    scheduler.add_job(check_and_send_scheduled_lessons, 'cron', hour='*', minute=0)
+    # Check every 5 minutes instead of hourly
+    scheduler.add_job(check_and_send_scheduled_lessons, 'interval', minutes=5)
     scheduler.add_job(ping_server, 'interval', minutes=10)
     scheduler.start()
     logger.info("Планувальник запущено")
