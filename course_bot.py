@@ -13,9 +13,31 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import traceback
 
+from datetime import datetime, timedelta
+import os
+
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except ImportError:
+    from pytz import timezone as ZoneInfo  # fallback for older Python
+
+USER_TIMEZONE = os.getenv("USER_TIMEZONE", "Europe/Kyiv")
 
 
 
+def local_to_utc(date_str, time_str):
+    """Convert local date and time strings to UTC datetime string."""
+    local_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+    local_dt = local_dt.replace(tzinfo=ZoneInfo(USER_TIMEZONE))
+    utc_dt = local_dt.astimezone(ZoneInfo("UTC"))
+    return utc_dt.strftime("%Y-%m-%d"), utc_dt.strftime("%H:%M")
+
+def utc_to_local(date_str, time_str):
+    """Convert UTC date and time strings to local datetime string."""
+    utc_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+    utc_dt = utc_dt.replace(tzinfo=ZoneInfo("UTC"))
+    local_dt = utc_dt.astimezone(ZoneInfo(USER_TIMEZONE))
+    return local_dt.strftime("%Y-%m-%d"), local_dt.strftime("%H:%M")
 
 # Налаштування логування
 logging.basicConfig(
@@ -340,8 +362,10 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         if lesson_day_str is None or lesson_day_str == "None":
             # Бонусний матеріал
-            user_data[user_id]["next_bonus_date"] = selected_date
-            user_data[user_id]["next_bonus_time"] = selected_time
+            utc_date, utc_time = local_to_utc(selected_date, selected_time)
+            user_data[user_id]["next_lesson_date"] = utc_date
+            user_data[user_id]["next_lesson_time"] = utc_time
+
             await query.edit_message_text(
                 text=f"Ви отримаєте бонусний матеріал {selected_date} о {selected_time}."
             )
@@ -350,8 +374,10 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Звичайний урок
             lesson_day = int(lesson_day_str)
             user_data[user_id]["next_lesson_day"] = lesson_day
-            user_data[user_id]["next_lesson_date"] = selected_date
-            user_data[user_id]["next_lesson_time"] = selected_time
+            utc_date, utc_time = local_to_utc(selected_date, selected_time)
+            user_data[user_id]["next_lesson_date"] = utc_date
+            user_data[user_id]["next_lesson_time"] = utc_time
+
             await query.edit_message_text(
                 text=f"Ви отримаєте урок {lesson_day} {selected_date} о {selected_time}."
             )
@@ -363,7 +389,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def check_and_send_scheduled_lessons(bot=None):
     """Перевірка та відправка запланованих уроків"""
     try:
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("UTC"))
         current_date = now.strftime('%Y-%m-%d')
         current_time = now.strftime('%H:%M')
         
@@ -387,7 +413,7 @@ async def check_and_send_scheduled_lessons(bot=None):
                 
                 # Parse the scheduled time
                 try:
-                    scheduled_datetime = datetime.strptime(f"{scheduled_date} {scheduled_time}", '%Y-%m-%d %H:%M')
+                    scheduled_datetime = datetime.strptime(f"{scheduled_date} {scheduled_time}", '%Y-%m-%d %H:%M').replace(tzinfo=ZoneInfo("UTC"))
                     logger.info(f"User {user_id} has lesson scheduled for {scheduled_datetime}, current time is {now}")
 
                     time_diff = (now - scheduled_datetime).total_seconds()
@@ -413,7 +439,7 @@ async def check_and_send_scheduled_lessons(bot=None):
                 
                 # Parse the scheduled time
                 try:
-                    scheduled_datetime = datetime.strptime(f"{scheduled_date} {scheduled_time}", '%Y-%m-%d %H:%M')
+                    scheduled_datetime = datetime.strptime(f"{scheduled_date} {scheduled_time}", '%Y-%m-%d %H:%M').replace(tzinfo=ZoneInfo("UTC"))
                     logger.info(f"User {user_id} has bonus scheduled for {scheduled_datetime}, current time is {now}")
                     
                     # Check if scheduled time has passed
@@ -636,14 +662,17 @@ async def debug_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
     debug_info += f"\nВсі дані користувача: {json.dumps(data, ensure_ascii=False, indent=2)}\n"
     
     if "next_lesson_date" in data:
+        local_date, local_time = utc_to_local(data['next_lesson_date'], data['next_lesson_time'])
         debug_info += f"\nЗапланований урок {data.get('next_lesson_day')}:\n"
-        debug_info += f"Дата: {data.get('next_lesson_date')}\n"
-        debug_info += f"Час: {data.get('next_lesson_time')}\n"
+        debug_info += f"Дата: {local_date}\n"
+        debug_info += f"Час: {local_time}\n"
+        # Далі залишаємо підрахунок часу до відправки, але використовуємо UTC
+  
         
         # Calculate time until send
         try:
-            scheduled_time = datetime.strptime(f"{data['next_lesson_date']} {data['next_lesson_time']}", '%Y-%m-%d %H:%M')
-            now = datetime.now()
+            scheduled_time = datetime.strptime(f"{data['next_lesson_date']} {data['next_lesson_time']}", '%Y-%m-%d %H:%M').replace(tzinfo=ZoneInfo("UTC"))
+            now = datetime.now(ZoneInfo("UTC"))
             time_diff = scheduled_time - now
             if time_diff.total_seconds() > 0:
                 hours, remainder = divmod(time_diff.total_seconds(), 3600)
@@ -656,8 +685,10 @@ async def debug_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
     
     if "next_bonus_date" in data:
         debug_info += f"\nЗапланований бонус:\n"
-        debug_info += f"Дата: {data.get('next_bonus_date')}\n"
-        debug_info += f"Час: {data.get('next_bonus_time')}\n"
+        local_date, local_time = utc_to_local(data['next_lesson_date'], data['next_lesson_time'])
+        debug_info += f"Дата: {local_date}\n"
+        debug_info += f"Час: {local_time}\n"
+  
         
         # Calculate time until send
         try:
@@ -684,91 +715,89 @@ async def debug_schedule_command(update: Update, context: ContextTypes.DEFAULT_T
 async def set_test_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /set_test_time для встановлення тестового часу"""
     user_id = str(update.effective_user.id)
-    
+
     if user_id not in user_data:
         await update.message.reply_text("Спочатку почніть курс: /start")
         return
-    
+
     if not context.args or len(context.args) != 2:
         await update.message.reply_text(
             "Використання: /set_test_time YYYY-MM-DD HH:MM\n"
             "Наприклад: /set_test_time 2025-05-16 08:00"
         )
         return
-    
+
     try:
         test_date = context.args[0]
         test_time = context.args[1]
         # Validate format
         datetime.strptime(f"{test_date} {test_time}", '%Y-%m-%d %H:%M')
-        
-        # Check the user's current scheduling status
+
         current_data = user_data[user_id]
         logger.info(f"Current user data for {user_id}: {current_data}")
-        
+
         has_next_lesson = "next_lesson_date" in current_data and "next_lesson_time" in current_data
         has_next_bonus = "next_bonus_date" in current_data and "next_bonus_time" in current_data
-        
+
         if has_next_lesson:
-            current_data["next_lesson_date"] = test_date
-            current_data["next_lesson_time"] = test_time
+            utc_date, utc_time = local_to_utc(test_date, test_time)
+            current_data["next_lesson_date"] = utc_date
+            current_data["next_lesson_time"] = utc_time
             save_user_data(user_data)
             await update.message.reply_text(
                 f"Тестовий час для уроку {current_data.get('next_lesson_day', '?')} встановлено на {test_date} {test_time}.\n"
                 "Використайте /test_scheduler для перевірки відправки."
             )
         elif has_next_bonus:
-            current_data["next_bonus_date"] = test_date
-            current_data["next_bonus_time"] = test_time
+            utc_date, utc_time = local_to_utc(test_date, test_time)
+            current_data["next_bonus_date"] = utc_date
+            current_data["next_bonus_time"] = utc_time
             save_user_data(user_data)
             await update.message.reply_text(
                 f"Тестовий час для бонусу встановлено на {test_date} {test_time}.\n"
                 "Використайте /test_scheduler для перевірки відправки."
             )
         else:
-            # Special case: Let's check if the message about scheduling exists
             msg = update.effective_message.reply_to_message
             if msg and "Ви отримаєте бонусний матеріал" in msg.text:
-                # Extract date and time from the message if possible
-                current_data["next_bonus_date"] = test_date  # We'll use the user-provided date/time
-                current_data["next_bonus_time"] = test_time
+                utc_date, utc_time = local_to_utc(test_date, test_time)
+                current_data["next_bonus_date"] = utc_date
+                current_data["next_bonus_time"] = utc_time
                 save_user_data(user_data)
                 await update.message.reply_text(
                     f"Тестовий час для бонусу встановлено на {test_date} {test_time} (відновлено з повідомлення).\n"
                     "Використайте /test_scheduler для перевірки відправки."
                 )
             elif msg and "Ви отримаєте урок" in msg.text:
-                # Try to extract lesson number
                 import re
                 match = re.search(r"урок (\d+)", msg.text)
                 lesson_day = int(match.group(1)) if match else current_data.get('current_day', 1) + 1
-                
+                utc_date, utc_time = local_to_utc(test_date, test_time)
                 current_data["next_lesson_day"] = lesson_day
-                current_data["next_lesson_date"] = test_date
-                current_data["next_lesson_time"] = test_time
+                current_data["next_lesson_date"] = utc_date
+                current_data["next_lesson_time"] = utc_time
                 save_user_data(user_data)
                 await update.message.reply_text(
                     f"Тестовий час для уроку {lesson_day} встановлено на {test_date} {test_time} (відновлено з повідомлення).\n"
                     "Використайте /test_scheduler для перевірки відправки."
                 )
             else:
-                # We can't find scheduled info, let's create it based on current day
                 current_day = current_data.get('current_day', 1)
                 if current_day >= 3:
-                    # Should be bonus next
-                    current_data["next_bonus_date"] = test_date
-                    current_data["next_bonus_time"] = test_time
+                    utc_date, utc_time = local_to_utc(test_date, test_time)
+                    current_data["next_bonus_date"] = utc_date
+                    current_data["next_bonus_time"] = utc_time
                     save_user_data(user_data)
                     await update.message.reply_text(
                         f"Тестовий час для бонусу встановлено на {test_date} {test_time} (створено нове розклад).\n"
                         "Використайте /test_scheduler для перевірки відправки."
                     )
                 else:
-                    # Should be next lesson
                     next_day = current_day + 1
+                    utc_date, utc_time = local_to_utc(test_date, test_time)
                     current_data["next_lesson_day"] = next_day
-                    current_data["next_lesson_date"] = test_date
-                    current_data["next_lesson_time"] = test_time
+                    current_data["next_lesson_date"] = utc_date
+                    current_data["next_lesson_time"] = utc_time
                     save_user_data(user_data)
                     await update.message.reply_text(
                         f"Тестовий час для уроку {next_day} встановлено на {test_date} {test_time} (створено нове розклад).\n"
