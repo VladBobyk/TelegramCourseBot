@@ -808,7 +808,6 @@ def save_user_data(data: dict) -> None:
     ...
 
 def main() -> None:
-    """Запуск бота"""
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -824,8 +823,11 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, 
         lambda u, c: u.message.reply_text("Використайте /start для початку курсу.")))
 
-    # Setup scheduler with application passed in
-    scheduler = setup_scheduler(application)
+    # Get the main event loop
+    main_loop = asyncio.get_event_loop()
+
+    # Setup scheduler with application and main event loop
+    scheduler = setup_scheduler(application, main_loop)
     
     # Setup web server
     setup_web_server()
@@ -840,12 +842,9 @@ def main() -> None:
     # Log startup information
     logger.info("Bot started and ready to process messages")
     
-    # Start polling
+    # Start polling (this blocks)
     application.run_polling()
 
-
-    main_loop = asyncio.get_event_loop()
-    scheduler = setup_scheduler(application, main_loop)
 
 if __name__ == "__main__":
     main()
