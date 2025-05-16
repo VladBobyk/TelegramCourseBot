@@ -371,67 +371,94 @@ async def check_and_send_scheduled_lessons(bot=None):
             if data.get('completed', False):
                 continue
                 
-            # Перевірка запланованих уроків - improved time comparison
-            if ("next_lesson_date" in data and 
-                "next_lesson_time" in data):
+            # Check for scheduled lessons - improved time comparison
+            if "next_lesson_date" in data and "next_lesson_time" in data:
+                scheduled_date = data["next_lesson_date"]
+                scheduled_time = data["next_lesson_time"]
                 
-                scheduled_datetime = datetime.strptime(f"{data['next_lesson_date']} {data['next_lesson_time']}", '%Y-%m-%d %H:%M')
-                if scheduled_datetime <= now:
-                    next_day = data.get("next_lesson_day", data['current_day'] + 1)
-                    try:
-                        logger.info(f"Sending scheduled lesson {next_day} to user {user_id}")
-                        await send_lesson(bot, user_id, next_day)
-                        # Remove scheduling data after sending
-                        for key in ["next_lesson_date", "next_lesson_time", "next_lesson_day"]:
-                            data.pop(key, None)
-                        save_user_data(user_data)
-                    except Exception as e:
-                        logger.error(f"Помилка відправки уроку {next_day}: {e}")
+                # Parse the scheduled time
+                try:
+                    scheduled_datetime = datetime.strptime(f"{scheduled_date} {scheduled_time}", '%Y-%m-%d %H:%M')
+                    logger.info(f"User {user_id} has lesson scheduled for {scheduled_datetime}, current time is {now}")
+                    
+                    # Check if scheduled time has passed
+                    if now >= scheduled_datetime:
+                        next_day = data.get("next_lesson_day", data.get('current_day', 1) + 1)
+                        logger.info(f"Time to send lesson {next_day} to user {user_id}")
+                        
+                        try:
+                            await send_lesson(bot, user_id, next_day)
+                            # Remove scheduling data after sending
+                            for key in ["next_lesson_date", "next_lesson_time", "next_lesson_day"]:
+                                data.pop(key, None)
+                            save_user_data(user_data)
+                            logger.info(f"Successfully sent lesson {next_day} to user {user_id}")
+                        except Exception as e:
+                            logger.error(f"Error sending lesson {next_day} to user {user_id}: {e}")
+                except Exception as e:
+                    logger.error(f"Error parsing scheduled datetime for user {user_id}: {e}")
             
-            # Перевірка запланованих бонусів - improved time comparison
-            if ("next_bonus_date" in data and 
-                "next_bonus_time" in data):
+            # Check for scheduled bonuses - improved time comparison
+            if "next_bonus_date" in data and "next_bonus_time" in data:
+                scheduled_date = data["next_bonus_date"]
+                scheduled_time = data["next_bonus_time"]
                 
-                scheduled_datetime = datetime.strptime(f"{data['next_bonus_date']} {data['next_bonus_time']}", '%Y-%m-%d %H:%M')
-                if scheduled_datetime <= now:
-                    try:
-                        logger.info(f"Sending scheduled bonus to user {user_id}")
-                        await send_bonus(bot, user_id)
-                        # Remove scheduling data after sending
-                        for key in ["next_bonus_date", "next_bonus_time"]:
-                            data.pop(key, None)
-                        save_user_data(user_data)
-                    except Exception as e:
-                        logger.error(f"Помилка відправки бонусу: {e}")
-        
+                # Parse the scheduled time
+                try:
+                    scheduled_datetime = datetime.strptime(f"{scheduled_date} {scheduled_time}", '%Y-%m-%d %H:%M')
+                    logger.info(f"User {user_id} has bonus scheduled for {scheduled_datetime}, current time is {now}")
+                    
+                    # Check if scheduled time has passed
+                    if now >= scheduled_datetime:
+                        logger.info(f"Time to send bonus to user {user_id}")
+                        
+                        try:
+                            await send_bonus(bot, user_id)
+                            # Remove scheduling data after sending
+                            for key in ["next_bonus_date", "next_bonus_time"]:
+                                data.pop(key, None)
+                            save_user_data(user_data)
+                            logger.info(f"Successfully sent bonus to user {user_id}")
+                        except Exception as e:
+                            logger.error(f"Error sending bonus to user {user_id}: {e}")
+                except Exception as e:
+                    logger.error(f"Error parsing scheduled datetime for user {user_id}: {e}")
+                    
     except Exception as e:
-        logger.error(f"Помилка перевірки уроків: {e}")
+        logger.error(f"Error in check_and_send_scheduled_lessons: {e}")
+        # Print full exception for debugging
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 
 def setup_scheduler(application=None):
     """Налаштування планувальника"""
-    scheduler = BackgroundScheduler()
+    scheduler = BackgroundScheduler(daemon=True)
     
-    # Use lambda to run async function in scheduler
-    if application:
-        # If application is provided, use its bot
-        scheduler.add_job(
-            lambda: asyncio.run(check_and_send_scheduled_lessons(application.bot)), 
-            'interval', 
-            minutes=5
-        )
-    else:
-        # Fallback for backward compatibility
-        scheduler.add_job(
-            lambda: asyncio.run(check_and_send_scheduled_lessons()), 
-            'interval', 
-            minutes=5
-        )
+    # Use a more robust approach for the async function in scheduler
+    def run_async_check():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        if application:
+            # If application is provided, use its bot
+            loop.run_until_complete(check_and_send_scheduled_lessons(application.bot))
+        else:
+            # Fallback for backward compatibility
+            loop.run_until_complete(check_and_send_scheduled_lessons())
+        loop.close()
         
+    # Add job to run every 1 minute (more frequent checks)
+    scheduler.add_job(run_async_check, 'interval', minutes=1)
     scheduler.add_job(ping_server, 'interval', minutes=10)
-    scheduler.start()
-    logger.info("Планувальник запущено")
+    
+    try:
+        scheduler.start()
+        logger.info("Scheduler started successfully")
+    except Exception as e:
+        logger.error(f"Error starting scheduler: {e}")
+        
+    return scheduler
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /help"""
@@ -776,10 +803,19 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, 
         lambda u, c: u.message.reply_text("Використайте /start для початку курсу.")))
 
-    # Pass the application to setup_scheduler
-    setup_scheduler(application)
+    # Setup scheduler with application passed in
+    scheduler = setup_scheduler(application)
+    
+    # Setup web server
     setup_web_server()
     
+    # Run initial check to catch any missed scheduled items
+    asyncio.run(check_and_send_scheduled_lessons(application.bot))
+    
+    # Log startup information
+    logger.info("Bot started and ready to process messages")
+    
+    # Start polling
     application.run_polling()
 
 if __name__ == "__main__":
