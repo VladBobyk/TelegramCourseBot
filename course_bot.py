@@ -2,6 +2,7 @@
 import os
 import json
 import requests
+import asyncio  # Add this with your other imports
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
@@ -350,15 +351,21 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Important: Save data immediately after updating
         save_user_data(user_data)
 
-async def check_and_send_scheduled_lessons():
+async def check_and_send_scheduled_lessons(bot=None):
     """Перевірка та відправка запланованих уроків"""
     try:
         now = datetime.now()
         current_date = now.strftime('%Y-%m-%d')
         current_time = now.strftime('%H:%M')
         
-        # Create a persistent application instance
-        bot = Application.builder().token(TELEGRAM_BOT_TOKEN).build().bot
+        logger.info(f"Running scheduled check at {current_date} {current_time}")
+        
+        if bot is None:
+            # For standalone testing, create a bot instance
+            bot = Application.builder().token(TELEGRAM_BOT_TOKEN).build().bot
+            logger.info("Created new bot instance for check_and_send_scheduled_lessons")
+        else:
+            logger.info("Using provided bot instance for check_and_send_scheduled_lessons")
         
         for user_id, data in user_data.items():
             if data.get('completed', False):
@@ -402,11 +409,26 @@ async def check_and_send_scheduled_lessons():
 
 
 
-def setup_scheduler():
+def setup_scheduler(application=None):
     """Налаштування планувальника"""
     scheduler = BackgroundScheduler()
-    # Check every 5 minutes instead of hourly
-    scheduler.add_job(check_and_send_scheduled_lessons, 'interval', minutes=5)
+    
+    # Use lambda to run async function in scheduler
+    if application:
+        # If application is provided, use its bot
+        scheduler.add_job(
+            lambda: asyncio.run(check_and_send_scheduled_lessons(application.bot)), 
+            'interval', 
+            minutes=5
+        )
+    else:
+        # Fallback for backward compatibility
+        scheduler.add_job(
+            lambda: asyncio.run(check_and_send_scheduled_lessons()), 
+            'interval', 
+            minutes=5
+        )
+        
     scheduler.add_job(ping_server, 'interval', minutes=10)
     scheduler.start()
     logger.info("Планувальник запущено")
@@ -749,13 +771,13 @@ def main() -> None:
     application.add_handler(CommandHandler("test_scheduler", test_scheduler_command))
     application.add_handler(CommandHandler("debug_schedule", debug_schedule_command))
     application.add_handler(CommandHandler("set_test_time", set_test_time_command))
-    # And add the command handler
     application.add_handler(CommandHandler("check_scheduler", check_scheduler_command))
     application.add_handler(CallbackQueryHandler(handle_button_click))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, 
         lambda u, c: u.message.reply_text("Використайте /start для початку курсу.")))
 
-    setup_scheduler()
+    # Pass the application to setup_scheduler
+    setup_scheduler(application)
     setup_web_server()
     
     application.run_polling()
