@@ -2,11 +2,19 @@
 import os
 import json
 import requests
+import tempfile
+import shutil
 import asyncio  # Add this with your other imports
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
 from apscheduler.schedulers.background import BackgroundScheduler
+
+
+import traceback
+
+
+
 
 # Налаштування логування
 logging.basicConfig(
@@ -380,12 +388,11 @@ async def check_and_send_scheduled_lessons(bot=None):
                 try:
                     scheduled_datetime = datetime.strptime(f"{scheduled_date} {scheduled_time}", '%Y-%m-%d %H:%M')
                     logger.info(f"User {user_id} has lesson scheduled for {scheduled_datetime}, current time is {now}")
-                    
-                    # Check if scheduled time has passed
-                    if now >= scheduled_datetime:
+
+                    time_diff = (now - scheduled_datetime).total_seconds()
+                    if -60 <= time_diff <= 60:
                         next_day = data.get("next_lesson_day", data.get('current_day', 1) + 1)
                         logger.info(f"Time to send lesson {next_day} to user {user_id}")
-                        
                         try:
                             await send_lesson(bot, user_id, next_day)
                             # Remove scheduling data after sending
@@ -435,29 +442,29 @@ async def check_and_send_scheduled_lessons(bot=None):
 def setup_scheduler(application=None):
     """Налаштування планувальника"""
     scheduler = BackgroundScheduler(daemon=True)
-    
-    # Use a more robust approach for the async function in scheduler
+
+    async def async_check():
+        await check_and_send_scheduled_lessons(application.bot if application else None)
+
     def run_async_check():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        if application:
-            # If application is provided, use its bot
-            loop.run_until_complete(check_and_send_scheduled_lessons(application.bot))
-        else:
-            # Fallback for backward compatibility
-            loop.run_until_complete(check_and_send_scheduled_lessons())
-        loop.close()
-        
-    # Add job to run every 1 minute (more frequent checks)
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(async_check())
+            else:
+                loop.run_until_complete(async_check())
+        except Exception as e:
+            logger.error(f"Error in scheduler run_async_check: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
     scheduler.add_job(run_async_check, 'interval', minutes=1)
     scheduler.add_job(ping_server, 'interval', minutes=10)
-    
     try:
         scheduler.start()
         logger.info("Scheduler started successfully")
     except Exception as e:
         logger.error(f"Error starting scheduler: {e}")
-        
     return scheduler
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -784,6 +791,22 @@ async def check_scheduler_command(update: Update, context: ContextTypes.DEFAULT_
     await check_and_send_scheduled_lessons()
     await update.message.reply_text("Перевірка планувальника завершена.")
 
+def save_user_data(data):
+    """Збереження даних користувачів (атомарно)"""
+    try:
+        os.makedirs(os.path.dirname(USER_DATA_FILE) or '.', exist_ok=True)
+        with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8', dir=os.path.dirname(USER_DATA_FILE) or '.') as tf:
+            json.dump(data, tf, ensure_ascii=False, indent=2)
+            tempname = tf.name
+        shutil.move(tempname, USER_DATA_FILE)
+    except Exception as e:
+        logger.error(f"Помилка збереження даних: {e}")
+
+
+def load_user_data() -> dict:
+    ...
+def save_user_data(data: dict) -> None:
+    ...
 
 
 def main() -> None:
@@ -809,9 +832,13 @@ def main() -> None:
     # Setup web server
     setup_web_server()
     
-    # Run initial check to catch any missed scheduled items
-    asyncio.run(check_and_send_scheduled_lessons(application.bot))
-    
+    # Schedule the initial check as a background task in the event loop
+    async def on_startup(app):
+        await check_and_send_scheduled_lessons(app.bot)
+        logger.info("Initial scheduled lessons check completed.")
+
+    application.post_init = on_startup
+
     # Log startup information
     logger.info("Bot started and ready to process messages")
     
