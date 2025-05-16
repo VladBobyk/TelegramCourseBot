@@ -440,31 +440,30 @@ async def check_and_send_scheduled_lessons(bot=None):
 
 
 def setup_scheduler(application=None, main_loop=None):
-       scheduler = BackgroundScheduler(daemon=True)
+    scheduler = BackgroundScheduler(daemon=True)
 
-       async def async_check():
-           await check_and_send_scheduled_lessons(application.bot if application else None)
+    async def async_check():
+        await check_and_send_scheduled_lessons(application.bot if application else None)
 
-       def run_async_check():
-           try:
-               if main_loop and main_loop.is_running():
-                   asyncio.run_coroutine_threadsafe(async_check(), main_loop)
-               else:
-                   # fallback for testing
-                   asyncio.run(async_check())
-           except Exception as e:
-               logger.error(f"Error in scheduler run_async_check: {e}")
-               import traceback
-               logger.error(traceback.format_exc())
+    def run_async_check():
+        try:
+            if main_loop and main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(async_check(), main_loop)
+            else:
+                logger.error("Main event loop is not running or not provided!")
+        except Exception as e:
+            logger.error(f"Error in scheduler run_async_check: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
-       scheduler.add_job(run_async_check, 'interval', minutes=1)
-       scheduler.add_job(ping_server, 'interval', minutes=10)
-       try:
-           scheduler.start()
-           logger.info("Scheduler started successfully")
-       except Exception as e:
-           logger.error(f"Error starting scheduler: {e}")
-       return scheduler
+    scheduler.add_job(run_async_check, 'interval', minutes=1)
+    scheduler.add_job(ping_server, 'interval', minutes=10)
+    try:
+        scheduler.start()
+        logger.info("Scheduler started successfully")
+    except Exception as e:
+        logger.error(f"Error starting scheduler: {e}")
+    return scheduler
    
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -808,8 +807,6 @@ def load_user_data() -> dict:
 def save_user_data(data: dict) -> None:
     ...
 
-main_loop = asyncio.get_event_loop()
-
 def main() -> None:
     """Запуск бота"""
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -845,6 +842,10 @@ def main() -> None:
     
     # Start polling
     application.run_polling()
+
+
+    main_loop = asyncio.get_event_loop()
+    scheduler = setup_scheduler(application, main_loop)
 
 if __name__ == "__main__":
     main()
