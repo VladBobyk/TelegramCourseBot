@@ -16,6 +16,7 @@ import traceback
 
 
 
+
 # Налаштування логування
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -438,34 +439,33 @@ async def check_and_send_scheduled_lessons(bot=None):
         logger.error(traceback.format_exc())
 
 
+def setup_scheduler(application=None, main_loop=None):
+       scheduler = BackgroundScheduler(daemon=True)
 
-def setup_scheduler(application=None):
-    """Налаштування планувальника"""
-    scheduler = BackgroundScheduler(daemon=True)
+       async def async_check():
+           await check_and_send_scheduled_lessons(application.bot if application else None)
 
-    async def async_check():
-        await check_and_send_scheduled_lessons(application.bot if application else None)
+       def run_async_check():
+           try:
+               if main_loop and main_loop.is_running():
+                   asyncio.run_coroutine_threadsafe(async_check(), main_loop)
+               else:
+                   # fallback for testing
+                   asyncio.run(async_check())
+           except Exception as e:
+               logger.error(f"Error in scheduler run_async_check: {e}")
+               import traceback
+               logger.error(traceback.format_exc())
 
-    def run_async_check():
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(async_check())
-            else:
-                loop.run_until_complete(async_check())
-        except Exception as e:
-            logger.error(f"Error in scheduler run_async_check: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-    scheduler.add_job(run_async_check, 'interval', minutes=1)
-    scheduler.add_job(ping_server, 'interval', minutes=10)
-    try:
-        scheduler.start()
-        logger.info("Scheduler started successfully")
-    except Exception as e:
-        logger.error(f"Error starting scheduler: {e}")
-    return scheduler
+       scheduler.add_job(run_async_check, 'interval', minutes=1)
+       scheduler.add_job(ping_server, 'interval', minutes=10)
+       try:
+           scheduler.start()
+           logger.info("Scheduler started successfully")
+       except Exception as e:
+           logger.error(f"Error starting scheduler: {e}")
+       return scheduler
+   
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /help"""
@@ -808,6 +808,7 @@ def load_user_data() -> dict:
 def save_user_data(data: dict) -> None:
     ...
 
+main_loop = asyncio.get_event_loop()
 
 def main() -> None:
     """Запуск бота"""
